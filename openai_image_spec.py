@@ -59,7 +59,7 @@ def clean_old_images(data_path: str):
 
 class CreateImageRequest(BaseModel):
     prompt: str
-    model: Optional[str] = "dall-e-2"
+    model: Optional[str] = "flux.1-dev"
     n: Optional[int] = 1
     quality: Optional[str] = "standard"
     response_format: Optional[str] = "url"
@@ -72,20 +72,25 @@ class CreateImageEditRequest(BaseModel):
     prompt: str
     image: str  # Assuming binary as a string
     mask: Optional[str] = None
-    model: Optional[str] = "dall-e-2"
+    model: Optional[str] = "flux.1-dev"
     n: Optional[int] = 1
     size: Optional[str] = "1024x1024"
     response_format: Optional[str] = "url"
     user: Optional[str] = None
+    guidance_scale: Optional[float] = 7.0 # Addon over openAI
 
 
 class CreateImageVariationRequest(BaseModel):
     image: str  # Assuming binary as a string
-    model: Optional[str] = "dall-e-2"
+    model: Optional[str] = "flux.1-dev"
     n: Optional[int] = 1
     size: Optional[str] = "1024x1024"
     response_format: Optional[str] = "url"
     user: Optional[str] = None
+    prompt: Optional[str] = None # Addon over openAI
+    num_inference_steps: Optional[int] = 25 # Addon over openAI
+    strength: Optional[float] = 0.75 # Addon over openAI
+    guidance_scale: Optional[float] = 0.0 # Addon over openAI
 
 
 class OpenAIImageSpec(LitSpec):

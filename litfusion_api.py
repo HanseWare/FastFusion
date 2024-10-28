@@ -2,13 +2,25 @@ import os
 import json
 from PIL import Image
 from litserve import LitServer, LitAPI
-from diffusers import AutoPipelineForText2Image
+from diffusers import AutoPipelineForText2Image, AutoPipelineForImage2Image, AutoPipelineForInpainting
 import torch
 
 from openai_image_spec import OpenAIImageSpec
 
 
 class LitFusion(LitAPI):
+    def __init__(self):
+        self.pipeline = None
+        self.quality_presets = None
+        self.enable_image_variations = None
+        self.enable_image_edits = None
+        self.enable_images_generation = None
+        self.enable_vae_tiling = None
+        self.enable_vae_slicing = None
+        self.enable_cpu_offload = None
+        self.max_n = None
+        self.model_name = None
+
     def setup(self, device):
         # Load model and configuration from environment variables and config.json
         self.model_name = os.getenv("MODEL", "default-model")
@@ -26,13 +38,20 @@ class LitFusion(LitAPI):
         config_path = "config.json"
         if os.path.exists(config_path):
             with open(config_path, "r") as config_file:
-                self.config = json.load(config_file)
+                self.quality_presets = json.load(config_file)
         else:
-            self.config = {}
+            self.quality_presets = {}
         
         # Load the model pipeline using AutoPipelineForText2Image
         print("Loading model pipeline...")
-        self.pipeline = AutoPipelineForText2Image.from_pretrained(self.model_name, torch_dtype=torch.bfloat16)
+        if self.enable_images_generation:
+            self.pipeline = AutoPipelineForText2Image.from_pretrained(self.model_name, torch_dtype=torch.bfloat16)
+        elif self.enable_image_edits:
+            self.pipeline = AutoPipelineForInpainting.from_pretrained(self.model_name, torch_dtype=torch.bfloat16)
+        elif self.enable_image_variations:
+            self.pipeline = AutoPipelineForImage2Image.from_pretrained(self.model_name, torch_dtype=torch.bfloat16)
+        else:
+            raise ValueError("No pipeline enabled. Please enable at least one of the following: images generation, image edits, image variations")
 
         # Apply settings before moving to GPU if necessary
         if self.enable_cpu_offload:
@@ -59,25 +78,40 @@ class LitFusion(LitAPI):
         # Logic to determine which type of request it is
         request_type = request.get('request_type')
         if request_type == "generation" and self.enable_images_generation:
-            for _ in range(min(request.get('n', 1), self.max_n)):
-                yield Image.new("RGB", (256, 256), color="blue")  # Example generated image
+            yield self.generate_images(request)
         elif request_type == "edit" and self.enable_image_edits:
-            for _ in range(min(request.get('n', 1), self.max_n)):
-                yield Image.new("RGB", (256, 256), color="green")  # Example edited image
+            yield self.edit_images(request)
         elif request_type == "variation" and self.enable_image_variations:
-            for _ in range(min(request.get('n', 1), self.max_n)):
-                yield Image.new("RGB", (256, 256), color="red")  # Example variation image
+            yield self.generate_variations(request)
         else:
             yield "Unknown or disabled request type"
 
     def generate_images(self, request):
-        pass
+        gen_pipe = AutoPipelineForText2Image.from_pipe(self.pipeline)
+        for _ in range(min(request.get('n', 1), self.max_n)):
+            prompt = request.get('prompt', 'A beautiful landscape')
+            images = gen_pipe(prompt=prompt).images
+            for img in images:
+                yield img
 
     def edit_images(self, request):
-        pass
+        edit_pipe = AutoPipelineForInpainting.from_pipe(self.pipeline)
+        for _ in range(min(request.get('n', 1), self.max_n)):
+            prompt = request.get('prompt', 'Edit the image to look more vibrant')
+            init_image = request.get('image')
+            mask_image = request.get('mask')
+            images = edit_pipe(prompt=prompt, image=init_image, mask_image=mask_image).images
+            for img in images:
+                yield img
 
     def generate_variations(self, request):
-        pass
+        var_pipe = AutoPipelineForImage2Image.from_pipe(self.pipeline)
+        for _ in range(min(request.get('n', 1), self.max_n)):
+            prompt = request.get('prompt', 'Generate variations')
+            init_image = request.get('image')
+            images = var_pipe(prompt=prompt, image=init_image).images
+            for img in images:
+                yield img
 
 
 api = LitFusion()
