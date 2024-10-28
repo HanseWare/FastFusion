@@ -1,0 +1,41 @@
+{
+  "name": "FLUX.1-dev",
+  "pipeline": {
+    "hf_model_id": "ChuckMcSneed/FLUX.1-dev",
+    "max_n": 4,
+    "torch_dtype_init": "bfloat16",
+    "torch_dtype_run": "float16",
+    "enable_cpu_offload": false,
+    "enable_vae_slicing": true,
+    "enable_vae_tiling": true,
+    "enable_images_generation": true,
+    "enable_images_edits": true,
+    "enable_images_variations": true
+  },
+  "generation-presets": {
+    "standard": {
+      "guidance_scale": 3.5,
+      "num_inference_steps": 25
+    },
+    "standard+": {
+      "guidance_scale": 5.5,
+      "num_inference_steps": 25
+    },
+    "standard++": {
+      "guidance_scale": 7.0,
+      "num_inference_steps": 25
+    },
+    "bfl": {
+      "guidance_scale": 3.5,
+      "num_inference_steps": 50
+    },
+    "hd": {
+      "guidance_scale": 5.5,
+      "num_inference_steps": 50
+    },
+    "xhd": {
+      "guidance_scale": 7.0,
+      "num_inference_steps": 50
+    }
+  }
+}

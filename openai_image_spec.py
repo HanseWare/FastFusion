@@ -65,7 +65,7 @@ class CreateImageRequest(BaseModel):
     response_format: Optional[str] = "url"
     size: Optional[str] = "1024x1024"
     style: Optional[str] = "vivid"
-    user: Optional[str] = None
+    user: Optional[str] = None # Ignored
 
 
 class CreateImageEditRequest(BaseModel):
@@ -76,9 +76,9 @@ class CreateImageEditRequest(BaseModel):
     n: Optional[int] = 1
     size: Optional[str] = "1024x1024"
     response_format: Optional[str] = "url"
-    user: Optional[str] = None
+    user: Optional[str] = None # Ignored
     guidance_scale: Optional[float] = 7.0 # Addon over openAI
-
+    num_inference_steps: Optional[int] = 50 # Addon over openAI
 
 class CreateImageVariationRequest(BaseModel):
     image: str  # Assuming binary as a string
@@ -86,9 +86,9 @@ class CreateImageVariationRequest(BaseModel):
     n: Optional[int] = 1
     size: Optional[str] = "1024x1024"
     response_format: Optional[str] = "url"
-    user: Optional[str] = None
-    prompt: Optional[str] = None # Addon over openAI
-    num_inference_steps: Optional[int] = 25 # Addon over openAI
+    user: Optional[str] = None # Ignored
+    prompt: str = None # Requirement over openAI
+    num_inference_steps: Optional[int] = 50 # Addon over openAI
     strength: Optional[float] = 0.75 # Addon over openAI
     guidance_scale: Optional[float] = 0.0 # Addon over openAI
 
@@ -99,6 +99,10 @@ class OpenAIImageSpec(LitSpec):
     ):
         super().__init__()
         # Register the endpoints
+        self.events = None
+        self.queues = None
+        self.response_queue_id = None
+        self.data_path = None
         self.add_endpoint("/v1/images/generations", self.handle_image_request, ["POST"])
         self.add_endpoint("/v1/images/edits", self.handle_image_request, ["POST"])
         self.add_endpoint("/v1/images/variations", self.handle_image_request, ["POST"])
