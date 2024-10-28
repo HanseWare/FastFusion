@@ -125,9 +125,10 @@ class OpenAIImageSpec(LitSpec):
         return request_dict
 
     def encode_response(self, output_generator: Iterator) -> Iterator[Dict]:
+        image_responses = []
         for output in output_generator:
             if isinstance(output, str):
-                yield {"result": output}
+                image_responses.append({"result": output})
             elif isinstance(output, Image.Image):
                 # Get the response format from the output or default to b64_json
                 response_format = getattr(output, 'response_format', 'b64_json')
@@ -136,15 +137,16 @@ class OpenAIImageSpec(LitSpec):
                     buffered = io.BytesIO()
                     output.save(buffered, format="PNG")
                     img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
-                    yield {"b64_json": img_str}
+                    image_responses.append({"b64_json": img_str})
                 elif response_format == "url":
                     # Save image as a file and return the URL
                     file_id = f"{shortuuid()}.png"
                     file_path = os.path.join(self.data_path, file_id)
                     output.save(file_path, format="PNG")
-                    yield {"url": f"/v1/images/data/{file_id}"}
+                    image_responses.append({"url": f"/v1/images/data/{file_id}"})
             else:
-                yield {"error": "Unexpected output format"}
+                image_responses.append({"error": "Unexpected output format"})
+        yield {"data": image_responses}
 
     async def handle_image_request(self, request: Union[CreateImageRequest, CreateImageEditRequest, CreateImageVariationRequest], background_tasks: BackgroundTasks):
         response_queue_id = self.response_queue_id
@@ -190,9 +192,9 @@ class OpenAIImageSpec(LitSpec):
                 msgs.append(encoded_response)
 
             content = msgs
-            image_responses.append(content)
+            image_responses.extend(content)
 
-        return Response(content=json.dumps(image_responses), media_type="application/json")
+        return Response(content=json.dumps({"data": image_responses}), media_type="application/json")
 
     async def get_image_data(self, file_id: str):
         file_path = os.path.join(self.data_path, file_id)
@@ -214,11 +216,14 @@ if __name__ == "__main__":
             # Logic to determine which type of request it is
             request_type = request.get('request_type')
             if request_type == "generation":
-                yield Image.new("RGB", (256, 256), color="blue")  # Example generated image
+                for _ in range(request.get('n', 1)):
+                    yield Image.new("RGB", (256, 256), color="blue")  # Example generated image
             elif request_type == "edit":
-                yield Image.new("RGB", (256, 256), color="green")  # Example edited image
+                for _ in range(request.get('n', 1)):
+                    yield Image.new("RGB", (256, 256), color="green")  # Example edited image
             elif request_type == "variation":
-                yield Image.new("RGB", (256, 256), color="red")  # Example variation image
+                for _ in range(request.get('n', 1)):
+                    yield Image.new("RGB", (256, 256), color="red")  # Example variation image
             else:
                 yield "Unknown request type"
 
