@@ -83,7 +83,7 @@ class LitFusion(LitAPI):
         print(f"CPU Offload Enabled: {self.config.pipeline.enable_cpu_offload}")
         print(f"VAE Slicing Enabled: {self.config.pipeline.enable_vae_slicing}")
         print(f"VAE Tiling Enabled: {self.config.pipeline.enable_vae_tiling}")
-        print(f"Images Generation Enabled: {self.config.pipeline.enable_images_generation}")
+        print(f"Images Generation Enabled: {self.config.pipeline.enable_images_generations}")
         print(f"Image Edits Enabled: {self.config.pipeline.enable_images_edits}")
         print(f"Image Variations Enabled: {self.config.pipeline.enable_images_variations}")
 
