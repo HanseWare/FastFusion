@@ -1,0 +1,15 @@
+image: 'docker:24-dind'
+
+stages:
+  - build
+
+build-LitFusion:
+  stage: build
+  rules:
+    - if: $CI_COMMIT_REF_SLUG == "main"
+      changes:
+        - '**/*.py'
+  script:
+    - docker login -u $GITHUB_USER -p $GITHUB_PASS ghcr.io
+    - docker build -t ghcr.io/cyb4black/litfusion:latest -f Dockerfile .
+    - docker push ghcr.io/cyb4black/litfusion:latest
