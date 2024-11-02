@@ -33,7 +33,7 @@ COPY LICENSE /app/LICENSE
 COPY README.md /app/README.md
 
 # Install litserve and requirements
-RUN pip install --no-cache-dir litserve==0.2.3 -r requirements.txt
+RUN pip install litserve==0.2.3 -r requirements.txt
 
 # Now copy python files and config file, not needed while installation but needed while running
 # so we have a small layer and build time is faster when onyl changing code
