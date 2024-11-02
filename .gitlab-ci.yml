@@ -1,10 +1,11 @@
-image: 'docker:24-dind'
+image: 'docker:24'
 
 stages:
   - build
 
 build-LitFusion:
   stage: build
+  services: [ "docker:24-dind" ]
   rules:
     - if: $CI_COMMIT_REF_SLUG == "main"
   script:
