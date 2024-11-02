@@ -17,6 +17,6 @@ build-LitFusion:
   rules:
     - if: $CI_COMMIT_REF_SLUG == "main"
   script:
-    - echo $GITHUB_PASS | docker login ghcr.io -u $GITHUB_USER --password-stdin
-    - docker build -t ghcr.io/cyb4black/litfusion:latest -f Dockerfile .
-    - docker push ghcr.io/cyb4black/litfusion:latest
+    - echo $DOCKERHUB_PASS | docker login -u $DOCKERHUB_USER --password-stdin
+    - docker build -t cyb4black/litfusion:latest -f Dockerfile .
+    - docker push cyb4black/litfusion:latest
