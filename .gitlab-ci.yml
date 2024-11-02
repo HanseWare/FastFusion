@@ -17,6 +17,6 @@ build-LitFusion:
   rules:
     - if: $CI_COMMIT_REF_SLUG == "main"
   script:
-    - echo $DOCKERHUB_PASS | docker login -u $DOCKERHUB_USER --password-stdin
+    - docker login -u $DOCKERHUB_USER -p $DOCKERHUB_PASS
     - docker build -t cyb4black/litfusion:latest -f Dockerfile .
     - docker push cyb4black/litfusion:latest
