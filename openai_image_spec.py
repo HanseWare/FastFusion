@@ -118,7 +118,7 @@ class OpenAIImageSpec(LitSpec):
         print("OpenAI Image spec setup complete")
 
     def decode_request(self, request: Union[CreateImageRequest, CreateImageEditRequest, CreateImageVariationRequest]) -> Dict:
-        request_dict = request
+        request_dict = request.model_dump()
         if isinstance(request, CreateImageEditRequest):
             # Convert image and mask (if available) to PIL format
             request_dict['image'] = convert_to_pil_image(request.image)

@@ -4,12 +4,7 @@ stages:
   - build
 
 variables:
-  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
-
-cache:
-  key: LitFusion-Cache
-  paths:
-    - .cache/pip
+  DOCKER_BUILDKIT: 1
 
 build-LitFusion:
   stage: build
