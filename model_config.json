@@ -8,11 +8,11 @@
     "enable_cpu_offload": false,
     "enable_vae_slicing": true,
     "enable_vae_tiling": true,
-    "enable_images_generation": true,
+    "enable_images_generations": true,
     "enable_images_edits": true,
     "enable_images_variations": true
   },
-  "generation-presets": {
+  "generation_presets": {
     "standard": {
       "guidance_scale": 3.5,
       "num_inference_steps": 25

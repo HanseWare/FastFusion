@@ -8,6 +8,8 @@ import torch
 
 from openai_image_spec import OpenAIImageSpec
 
+def get_torch_dtype(dtype_name):
+    return getattr(torch, dtype_name, None)
 
 class PipelineConfig(BaseModel):
     hf_model_id: str
@@ -15,7 +17,7 @@ class PipelineConfig(BaseModel):
     torch_dtype_init: str
     torch_dtype_run: str
     enable_cpu_offload: bool
-    enable_images_generation: bool
+    enable_images_generations: bool
     enable_images_edits: bool
     enable_images_variations: bool
     enable_vae_slicing: bool
@@ -50,15 +52,16 @@ class LitFusion(LitAPI):
 
         # Load the model pipeline using AutoPipelineForText2Image
         print("Loading model pipeline...")
-        if self.config.enable_images_generations:
-            self.base_pipe = AutoPipelineForText2Image.from_pretrained(self.config.hf_model_id,
-                                                                       torch_dtype=self.config.torch_dtype_init)
-        elif self.config.enable_images_edits:
-            self.base_pipe = AutoPipelineForInpainting.from_pretrained(self.config.hf_model_id,
-                                                                       torch_dtype=self.config.torch_dtype_init)
-        elif self.config.enable_images_variations:
-            self.base_pipe = AutoPipelineForImage2Image.from_pretrained(self.config.hf_model_id,
-                                                                        torch_dtype=self.config.torch_dtype_init)
+        init_dtype = get_torch_dtype(self.config.pipeline.torch_dtype_init)
+        if self.config.pipeline.enable_images_generations:
+            self.base_pipe = AutoPipelineForText2Image.from_pretrained(self.config.pipeline.hf_model_id,
+                                                                       torch_dtype=init_dtype)
+        elif self.config.pipeline.enable_images_edits:
+            self.base_pipe = AutoPipelineForInpainting.from_pretrained(self.config.pipeline.hf_model_id,
+                                                                       torch_dtype=init_dtype)
+        elif self.config.pipeline.enable_images_variations:
+            self.base_pipe = AutoPipelineForImage2Image.from_pretrained(self.config.pipeline.hf_model_id,
+                                                                        torch_dtype=init_dtype)
         else:
             raise ValueError(
                 "No pipeline enabled. Please enable at least one of the following: images generation, image edits, image variations")
@@ -72,7 +75,7 @@ class LitFusion(LitAPI):
             self.base_pipe.vae.enable_tiling()
 
         # Move the pipeline to GPU and convert to operation dtype
-        self.base_pipe.to(getattr(torch, self.config.pipeline.torch_dtype_run)).to("cuda")
+        self.base_pipe.to(get_torch_dtype(self.config.pipeline.torch_dtype_run)).to("cuda")
 
         print("Model setup complete with:")
         print(f"Model: {self.config.pipeline.hf_model_id}")
@@ -87,11 +90,11 @@ class LitFusion(LitAPI):
     def predict(self, request):
         # Logic to determine which type of request it is
         request_type = request.get('request_type')
-        if request_type == "generation" and self.config.enable_images_generations:
+        if request_type == "generation" and self.config.pipeline.enable_images_generations:
             yield self.generate_images(request)
-        elif request_type == "edit" and self.config.enable_images_edits:
+        elif request_type == "edit" and self.config.pipeline.enable_images_edits:
             yield self.edit_images(request)
-        elif request_type == "variation" and self.config.enable_images_variations:
+        elif request_type == "variation" and self.config.pipeline.enable_images_variations:
             yield self.generate_variations(request)
         else:
             yield "Unknown or disabled request type"
@@ -125,7 +128,7 @@ class LitFusion(LitAPI):
             for img in images:
                 yield img
 
-
-api = LitFusion()
-server = LitServer(api, spec=OpenAIImageSpec())
-server.run(port=8000)
+if __name__ == "__main__":
+    api = LitFusion()
+    server = LitServer(api, spec=OpenAIImageSpec())
+    server.run(port=8000)
