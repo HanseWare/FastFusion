@@ -3,6 +3,14 @@ image: 'docker:24'
 stages:
   - build
 
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+
+cache:
+  key: LitFusion-Cache
+  paths:
+    - .cache/pip
+
 build-LitFusion:
   stage: build
   services: [ "docker:24-dind" ]
