@@ -13,6 +13,5 @@ build-LitFusion:
     - if: $CI_COMMIT_REF_SLUG == "main"
   script:
     - docker login -u $DOCKERHUB_USERNAME -p $DOCKERHUB_PASS
-    - docker pull cyb4black/litfusion:latest || true
-    - docker build --build-arg BUILDKIT_INLINE_CACHE=1 --cache-from cyb4black/litfusion:latest -t cyb4black/litfusion:latest -f Dockerfile .
+    - docker build -t cyb4black/litfusion:latest -f Dockerfile .
     - docker push cyb4black/litfusion:latest
