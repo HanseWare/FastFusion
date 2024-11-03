@@ -197,11 +197,11 @@ class OpenAIImageSpec(LitSpec):
             choice_pipes.append(data)
         return choice_pipes
 
-    async def collect_image_responses(self, request, generator_list: List[asyncio.Queue]):
+    async def collect_image_responses(self, request: Dict, generator_list: List[asyncio.Queue]):
         """
         Collects image responses from the server queues.
         """
-        model = request.model
+        model = request["model"]
         image_responses = []
         # iterate over n responses
         for i, streaming_response in enumerate(generator_list):
