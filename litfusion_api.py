@@ -91,11 +91,11 @@ class LitFusion(LitAPI):
         # Logic to determine which type of request it is
         request_type = request.get('request_type')
         if request_type == "generation" and self.config.pipeline.enable_images_generations:
-            yield self.generate_images(request)
+            yield from self.generate_images(request)
         elif request_type == "edit" and self.config.pipeline.enable_images_edits:
-            yield self.edit_images(request)
+            yield from self.edit_images(request)
         elif request_type == "variation" and self.config.pipeline.enable_images_variations:
-            yield self.generate_variations(request)
+            yield from self.generate_variations(request)
         else:
             yield "Unknown or disabled request type"
 

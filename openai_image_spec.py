@@ -188,8 +188,7 @@ class OpenAIImageSpec(LitSpec):
         responses = await self.get_from_queues(uids)
 
         response_task = asyncio.create_task(self.collect_image_responses(request, responses))
-        response_list = await response_task
-        return await response_list
+        return await response_task
 
     async def get_from_queues(self, uids) -> List[asyncio.Queue]:
         choice_pipes = []
