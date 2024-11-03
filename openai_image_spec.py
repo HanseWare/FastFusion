@@ -103,9 +103,9 @@ class OpenAIImageSpec(LitSpec):
         self.queues = None
         self.response_queue_id = None
         self.data_path = None
-        self.add_endpoint("/v1/images/generations", self.handle_image_request, ["POST"])
-        self.add_endpoint("/v1/images/edits", self.handle_image_request, ["POST"])
-        self.add_endpoint("/v1/images/variations", self.handle_image_request, ["POST"])
+        self.add_endpoint("/v1/images/generations", self.handle_images_generations_request, ["POST"])
+        self.add_endpoint("/v1/images/edits", self.handle_images_edits_request, ["POST"])
+        self.add_endpoint("/v1/images/variations", self.handle_images_variations_request, ["POST"])
         self.add_endpoint("/v1/images/data/{file_id}", self.get_image_data, ["GET"])
 
     def setup(self, server: "LitServer"):
