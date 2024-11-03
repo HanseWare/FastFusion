@@ -1,13 +1,14 @@
 image: 'docker:24'
 
 stages:
+  - build-base
   - build
 
 variables:
   DOCKER_BUILDKIT: 1
 
 build-LitFusion-Base:
-  stage: build
+  stage: build-base
   services: [ "docker:24-dind" ]
   rules:
     - if: $CI_COMMIT_REF_SLUG == "main"
