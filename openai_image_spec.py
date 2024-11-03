@@ -117,20 +117,17 @@ class OpenAIImageSpec(LitSpec):
         cleanup_thread.start()
         print("OpenAI Image spec setup complete")
 
-    def decode_request(self, request: Union[CreateImageRequest, CreateImageEditRequest, CreateImageVariationRequest]) -> Dict:
-        request_dict = request
-        if isinstance(request, CreateImageEditRequest):
+    def decode_request(self, request: Dict) -> Dict:
+        request_dict = request.copy()
+        if request["request_type"] is "edit":
             # Convert image and mask (if available) to PIL format
-            request_dict['image'] = convert_to_pil_image(request.image)
-            if request.mask:
-                request_dict['mask'] = convert_to_pil_image(request.mask)
+            request_dict['image'] = convert_to_pil_image(request["image"])
+            if request["mask"]:
+                request_dict['mask'] = convert_to_pil_image(request["mask"])
             request_dict['request_type'] = "edit"
-        elif isinstance(request, CreateImageVariationRequest):
+        elif request["request_type"] is "variation":
             # Convert image to PIL format
-            request_dict['image'] = convert_to_pil_image(request.image)
-            request_dict['request_type'] = "variation"
-        else:
-            request_dict['request_type'] = "generation"
+            request_dict['image'] = convert_to_pil_image(request["image"])
         return request_dict
 
     def encode_response(self, output_generator: Iterator) -> Iterator[Dict]:
@@ -157,14 +154,29 @@ class OpenAIImageSpec(LitSpec):
                 image_responses.append({"error": "Unexpected output format"})
         yield {"data": image_responses}
 
-    async def handle_image_request(self, request: Union[CreateImageRequest, CreateImageEditRequest, CreateImageVariationRequest], background_tasks: BackgroundTasks):
+    async def handle_images_generations_request(self, request: CreateImageRequest, background_tasks: BackgroundTasks):
+        request_dict = request.model_dump()
+        request_dict['request_type'] = "generation"
+        return await self.handle_image_request(request_dict, background_tasks)
+
+    async def handle_images_edits_request(self, request: CreateImageEditRequest, background_tasks: BackgroundTasks):
+        request_dict = request.model_dump()
+        request_dict['request_type'] = "edit"
+        return await self.handle_image_request(request_dict, background_tasks)
+
+    async def handle_images_variations_request(self, request: CreateImageVariationRequest, background_tasks: BackgroundTasks):
+        request_dict = request.model_dump()
+        request_dict['request_type'] = "variation"
+        return await self.handle_image_request(request_dict, background_tasks)
+
+    async def handle_image_request(self, request: Dict, background_tasks: BackgroundTasks):
         response_queue_id = self.response_queue_id
         logger.debug("Received image request %s", request)
-        uids = [uuid.uuid4() for _ in range(request.n)]
+        uids = [uuid.uuid4() for _ in range(request["n"])]
         self.queues = []
         self.events = []
         for uid in uids:
-            request_el = self.decode_request(request)
+            request_el = request.copy()
             request_el['n'] = 1
             q = deque()
             event = asyncio.Event()
