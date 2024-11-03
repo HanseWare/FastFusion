@@ -4,12 +4,7 @@ stages:
   - build
 
 variables:
-  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
-
-cache:
-  key: LitFusion-Cache
-  paths:
-    - .cache/pip
+  DOCKER_BUILDKIT: 1
 
 build-LitFusion:
   stage: build
@@ -17,6 +12,6 @@ build-LitFusion:
   rules:
     - if: $CI_COMMIT_REF_SLUG == "main"
   script:
-    - echo $GITHUB_PASS | docker login ghcr.io -u $GITHUB_USER --password-stdin
-    - docker build -t ghcr.io/cyb4black/litfusion:latest -f Dockerfile .
-    - docker push ghcr.io/cyb4black/litfusion:latest
+    - docker login -u $DOCKERHUB_USERNAME -p $DOCKERHUB_PASS
+    - docker build -t cyb4black/litfusion:latest -f Dockerfile .
+    - docker push cyb4black/litfusion:latest
