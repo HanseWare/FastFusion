@@ -81,14 +81,22 @@ class LitFusion(LitAPI):
 
         # Apply settings before moving to GPU if necessary
         if self.config.pipeline.enable_cpu_offload:
+            print("Enabling CPU offload...")
             self.base_pipe.enable_sequential_cpu_offload()
         if self.config.pipeline.enable_vae_slicing:
+            print("Enabling VAE slicing...")
             self.base_pipe.vae.enable_slicing()
         if self.config.pipeline.enable_vae_tiling:
+            print("Enabling VAE tiling...")
             self.base_pipe.vae.enable_tiling()
 
         # Move the pipeline to GPU and convert to operation dtype
-        self.base_pipe.to(get_torch_dtype(self.config.pipeline.torch_dtype_run)).to("cuda")
+        print("Moving pipeline to runtime dtype")
+        print("Pipeline dtype:", self.base_pipe.dtype)
+        self.base_pipe.to(get_torch_dtype(self.config.pipeline.torch_dtype_run))
+        print("Move to GPU")
+        self.base_pipe.to("cuda")
+        print("Finished moving pipeline to GPU")
 
         print("Model setup complete with:")
         print(f"Model: {self.config.pipeline.hf_model_id}")
