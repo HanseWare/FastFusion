@@ -6,7 +6,7 @@ import uuid
 import os
 import threading
 from datetime import datetime, timedelta
-from typing import Annotated, Dict, Iterator, List, Literal, Optional, Union
+from typing import Annotated, Dict, Iterator, List, Literal, Optional, Union, AsyncGenerator
 
 from fastapi import BackgroundTasks, HTTPException, Request, Response
 from pydantic import BaseModel, Field
@@ -131,28 +131,22 @@ class OpenAIImageSpec(LitSpec):
         return request_dict
 
     def encode_response(self, output_generator: Iterator) -> Iterator[Dict]:
-        image_responses = []
         for output in output_generator:
-            if isinstance(output, str):
-                image_responses.append({"result": output})
-            elif isinstance(output, Image.Image):
-                # Get the response format from the output or default to b64_json
-                response_format = getattr(output, 'response_format', 'b64_json')
+            if isinstance(output, dict) and "image" in output:
+                img_str = output["image"]
+                response_format = output.get('response_format', 'url')
                 if response_format == "b64_json":
-                    # Convert PIL Image to base64 string
-                    buffered = io.BytesIO()
-                    output.save(buffered, format="PNG")
-                    img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
-                    image_responses.append({"b64_json": img_str})
+                    yield {"b64_json": img_str}
                 elif response_format == "url":
-                    # Save image as a file and return the URL
+                    # Save image and return URL
+                    img_data = base64.b64decode(img_str)
+                    img = Image.open(io.BytesIO(img_data))
                     file_id = f"{shortuuid()}.png"
                     file_path = os.path.join(self.data_path, file_id)
-                    output.save(file_path, format="PNG")
-                    image_responses.append({"url": f"/v1/images/data/{file_id}"})
+                    img.save(file_path, format="PNG")
+                    yield {"url": f"/v1/images/data/{file_id}"}
             else:
-                image_responses.append({"error": "Unexpected output format"})
-        yield {"data": image_responses}
+                yield {"error": "Unexpected output format"}
 
     async def handle_images_generations_request(self, request: CreateImageRequest, background_tasks: BackgroundTasks):
         request_dict = request.model_dump()
@@ -172,7 +166,8 @@ class OpenAIImageSpec(LitSpec):
     async def handle_image_request(self, request: Dict, background_tasks: BackgroundTasks):
         response_queue_id = self.response_queue_id
         logger.debug("Received image request %s", request)
-        uids = [uuid.uuid4() for _ in range(request["n"])]
+        n = request.get("n", 1)
+        uids = [uuid.uuid4() for _ in range(n)]
         self.queues = []
         self.events = []
         for uid in uids:
@@ -184,38 +179,30 @@ class OpenAIImageSpec(LitSpec):
             self._server.request_queue.put((response_queue_id, uid, time.monotonic(), request_el))
             self.queues.append(q)
             self.events.append(event)
-
         responses = await self.get_from_queues(uids)
-
         response_task = asyncio.create_task(self.collect_image_responses(request, responses))
         return await response_task
 
-    async def get_from_queues(self, uids) -> List[asyncio.Queue]:
-        choice_pipes = []
+    async def get_from_queues(self, uids) -> List[AsyncGenerator]:
+        image_pipes = []
         for uid, q, event in zip(uids, self.queues, self.events):
-            data = self._server.data_streamer(q, event, send_status=True)
-            choice_pipes.append(data)
-        return choice_pipes
+            data_stream = self._server.data_streamer(q, event, send_status=True)
+            image_pipes.append(data_stream)
+        return image_pipes
 
-    async def collect_image_responses(self, request: Dict, generator_list: List[asyncio.Queue]):
-        """
-        Collects image responses from the server queues.
-        """
-        model = request["model"]
+    async def collect_image_responses(self, request: Dict, generator_list: List[AsyncGenerator]):
         image_responses = []
-        # iterate over n responses
-        for i, streaming_response in enumerate(generator_list):
-            msgs = []
-            async for response, status in streaming_response:
+        for response_stream in generator_list:
+            async for response, status in response_stream:
                 if status == LitAPIStatus.ERROR:
                     raise response
                 encoded_response = json.loads(response)
-                msgs.append(encoded_response)
-
-            content = msgs
-            image_responses.extend(content)
-
-        return Response(content=json.dumps({"data": image_responses}), media_type="application/json")
+                image_responses.append(encoded_response)
+        final_response = {
+            "created": int(time.time()),
+            "data": image_responses
+        }
+        return Response(content=json.dumps(final_response), media_type="application/json")
 
     async def get_image_data(self, file_id: str):
         file_path = os.path.join(self.data_path, file_id)
