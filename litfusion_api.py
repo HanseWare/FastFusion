@@ -1,5 +1,6 @@
 import base64
 import io
+import logging
 import os
 import json
 from pydantic import BaseModel
@@ -191,5 +192,6 @@ if __name__ == "__main__":
     api = LitFusion()
     # get loglevel from env
     loglevel = os.getenv("LITFUSION_LOGLEVEL", "info")
+    logging.basicConfig(level=getattr(logging, loglevel.upper(), logging.INFO))
     server = LitServer(api, spec=OpenAIImageSpec())
     server.run(port=8000, log_level=loglevel)
