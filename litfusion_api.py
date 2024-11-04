@@ -192,4 +192,4 @@ if __name__ == "__main__":
     # get loglevel from env
     loglevel = os.getenv("LITFUSION_LOGLEVEL", "info")
     server = LitServer(api, spec=OpenAIImageSpec())
-    server.run(port=8000)
+    server.run(port=8000, log_level=loglevel)
