@@ -119,19 +119,21 @@ class OpenAIImageSpec(LitSpec):
 
     def decode_request(self, request: Dict) -> Dict:
         request_dict = request.copy()
-        if request["request_type"] is "edit":
+        if request["request_type"] == "edit":
             # Convert image and mask (if available) to PIL format
             request_dict['image'] = convert_to_pil_image(request["image"])
             if request["mask"]:
                 request_dict['mask'] = convert_to_pil_image(request["mask"])
             request_dict['request_type'] = "edit"
-        elif request["request_type"] is "variation":
+        elif request["request_type"] == "variation":
             # Convert image to PIL format
             request_dict['image'] = convert_to_pil_image(request["image"])
         return request_dict
 
     def encode_response(self, output_generator: Iterator) -> Iterator[Dict]:
+        logger.debug("Encoding image response")
         for output in output_generator:
+            logger.debug("Output: %s", output)
             if isinstance(output, dict) and "image" in output:
                 img_str = output["image"]
                 response_format = output.get('response_format', 'url')
@@ -180,6 +182,7 @@ class OpenAIImageSpec(LitSpec):
             self.queues.append(q)
             self.events.append(event)
         responses = await self.get_from_queues(uids)
+        logger.debug("Got responses from queues %s", responses)
         response_task = asyncio.create_task(self.collect_image_responses(request, responses))
         return await response_task
 
@@ -191,6 +194,7 @@ class OpenAIImageSpec(LitSpec):
         return image_pipes
 
     async def collect_image_responses(self, request: Dict, generator_list: List[AsyncGenerator]):
+        logger.debug("Collecting image responses")
         image_responses = []
         for response_stream in generator_list:
             async for response, status in response_stream:

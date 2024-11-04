@@ -150,5 +150,7 @@ class LitFusion(LitAPI):
 
 if __name__ == "__main__":
     api = LitFusion()
+    # get loglevel from env
+    loglevel = os.getenv("LITFUSION_LOGLEVEL", "info")
     server = LitServer(api, spec=OpenAIImageSpec())
     server.run(port=8000)
