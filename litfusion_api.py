@@ -13,6 +13,16 @@ from openai_image_spec import OpenAIImageSpec
 def get_torch_dtype(dtype_name):
     return getattr(torch, dtype_name, None)
 
+def convert_to_pil_image(image_data: str) -> Image.Image:
+    if image_data.startswith("data:image"):
+        header, encoded = image_data.split(",", 1)
+        image_bytes = base64.b64decode(encoded)
+    else:
+        image_bytes = image_data.encode('latin1')
+
+    image = Image.open(io.BytesIO(image_bytes))
+    return image
+
 class PipelineConfig(BaseModel):
     hf_model_id: str
     max_n: int
@@ -131,22 +141,51 @@ class LitFusion(LitAPI):
 
     def edit_images(self, request):
         edit_pipe = AutoPipelineForInpainting.from_pipe(self.base_pipe)
-        for _ in range(min(request.get('n', 1), self.config.pipeline.max_n)):
-            prompt = request.get('prompt', 'Edit the image to look more vibrant')
-            init_image = request.get('image')
-            mask_image = request.get('mask')
-            images = edit_pipe(prompt=prompt, image=init_image, mask_image=mask_image).images
-            for img in images:
-                yield img
+        images_to_generate = min(request.get('n', 1), self.config.pipeline.max_n)
+        prompt = request.get('prompt', 'Edit the image to look more vibrant')
+        init_image_data = request.get('image')
+        init_image = convert_to_pil_image(init_image_data)
+        mask_image_data = request.get('mask')
+        mask_image = convert_to_pil_image(mask_image_data) if mask_image_data else None
+        images = edit_pipe(
+            prompt=prompt,
+            image=init_image,
+            mask_image=mask_image,
+            num_images_per_prompt=images_to_generate
+        ).images
+        for img in images:
+            # Serialize image to base64 string
+            buffered = io.BytesIO()
+            img.save(buffered, format="PNG")
+            img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+            # Yield a dictionary containing the serialized image
+            yield {
+                "image": img_str,
+                "response_format": request.get('response_format', 'url')
+            }
 
     def generate_variations(self, request):
         var_pipe = AutoPipelineForImage2Image.from_pipe(self.base_pipe)
-        for _ in range(min(request.get('n', 1), self.config.pipeline.max_n)):
-            prompt = request.get('prompt', 'Generate variations')
-            init_image = request.get('image')
-            images = var_pipe(prompt=prompt, image=init_image).images
-            for img in images:
-                yield img
+        images_to_generate = min(request.get('n', 1), self.config.pipeline.max_n)
+        prompt = request.get('prompt', 'Generate variations')
+        init_image_data = request.get('image')
+        init_image = convert_to_pil_image(init_image_data)
+        images = var_pipe(
+            prompt=prompt,
+            image=init_image,
+            num_images_per_prompt=images_to_generate
+        ).images
+        for img in images:
+            # Serialize image to base64 string
+            buffered = io.BytesIO()
+            img.save(buffered, format="PNG")
+            img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+            # Yield a dictionary containing the serialized image
+            yield {
+                "image": img_str,
+                "response_format": request.get('response_format', 'url')
+            }
+
 
 if __name__ == "__main__":
     api = LitFusion()

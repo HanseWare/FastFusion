@@ -21,24 +21,9 @@ from litserve.utils import LitAPIStatus, azip
 
 logger = logging.getLogger(__name__)
 
+
 def shortuuid():
     return uuid.uuid4().hex[:6]
-
-
-def convert_to_pil_image(image_data: str) -> Image.Image:
-    """
-    Converts various image formats (base64, binary PNG/JPEG) to a PIL Image object.
-    """
-    if image_data.startswith("data:image"):
-        # Handling base64 encoded image data
-        header, encoded = image_data.split(",", 1)
-        image_bytes = base64.b64decode(encoded)
-    else:
-        # Assuming binary image data
-        image_bytes = image_data.encode('latin1')
-
-    image = Image.open(io.BytesIO(image_bytes))
-    return image
 
 
 def clean_old_images(data_path: str):
@@ -65,7 +50,7 @@ class CreateImageRequest(BaseModel):
     response_format: Optional[str] = "url"
     size: Optional[str] = "1024x1024"
     style: Optional[str] = "vivid"
-    user: Optional[str] = None # Ignored
+    user: Optional[str] = None  # Ignored
 
 
 class CreateImageEditRequest(BaseModel):
@@ -76,9 +61,10 @@ class CreateImageEditRequest(BaseModel):
     n: Optional[int] = 1
     size: Optional[str] = "1024x1024"
     response_format: Optional[str] = "url"
-    user: Optional[str] = None # Ignored
-    guidance_scale: Optional[float] = 7.0 # Addon over openAI
-    num_inference_steps: Optional[int] = 50 # Addon over openAI
+    user: Optional[str] = None  # Ignored
+    guidance_scale: Optional[float] = 7.0  # Addon over openAI
+    num_inference_steps: Optional[int] = 50  # Addon over openAI
+
 
 class CreateImageVariationRequest(BaseModel):
     image: str  # Assuming binary as a string
@@ -86,16 +72,16 @@ class CreateImageVariationRequest(BaseModel):
     n: Optional[int] = 1
     size: Optional[str] = "1024x1024"
     response_format: Optional[str] = "url"
-    user: Optional[str] = None # Ignored
-    prompt: str = None # Requirement over openAI
-    num_inference_steps: Optional[int] = 50 # Addon over openAI
-    strength: Optional[float] = 0.75 # Addon over openAI
-    guidance_scale: Optional[float] = 0.0 # Addon over openAI
+    user: Optional[str] = None  # Ignored
+    prompt: str = None  # Requirement over openAI
+    num_inference_steps: Optional[int] = 50  # Addon over openAI
+    strength: Optional[float] = 0.75  # Addon over openAI
+    guidance_scale: Optional[float] = 0.0  # Addon over openAI
 
 
 class OpenAIImageSpec(LitSpec):
     def __init__(
-        self,
+            self,
     ):
         super().__init__()
         # Register the endpoints
@@ -118,17 +104,17 @@ class OpenAIImageSpec(LitSpec):
         print("OpenAI Image spec setup complete")
 
     def decode_request(self, request: Dict) -> Dict:
-        request_dict = request.copy()
-        if request["request_type"] == "edit":
-            # Convert image and mask (if available) to PIL format
-            request_dict['image'] = convert_to_pil_image(request["image"])
-            if request["mask"]:
-                request_dict['mask'] = convert_to_pil_image(request["mask"])
-            request_dict['request_type'] = "edit"
-        elif request["request_type"] == "variation":
-            # Convert image to PIL format
-            request_dict['image'] = convert_to_pil_image(request["image"])
-        return request_dict
+        return request.copy()
+        # if request["request_type"] == "edit":
+        #     # Convert image and mask (if available) to PIL format
+        #     request_dict['image'] = convert_to_pil_image(request["image"])
+        #     if request["mask"]:
+        #         request_dict['mask'] = convert_to_pil_image(request["mask"])
+        #     request_dict['request_type'] = "edit"
+        # elif request["request_type"] == "variation":
+        #     # Convert image to PIL format
+        #     request_dict['image'] = convert_to_pil_image(request["image"])
+        # return request_dict
 
     def encode_response(self, output_generator: Iterator) -> Iterator[Dict]:
         logger.debug("Encoding image response")
@@ -160,7 +146,8 @@ class OpenAIImageSpec(LitSpec):
         request_dict['request_type'] = "edit"
         return await self.handle_image_request(request_dict, background_tasks)
 
-    async def handle_images_variations_request(self, request: CreateImageVariationRequest, background_tasks: BackgroundTasks):
+    async def handle_images_variations_request(self, request: CreateImageVariationRequest,
+                                               background_tasks: BackgroundTasks):
         request_dict = request.model_dump()
         request_dict['request_type'] = "variation"
         return await self.handle_image_request(request_dict, background_tasks)
