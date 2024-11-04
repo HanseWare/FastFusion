@@ -1,3 +1,5 @@
+import base64
+import io
 import os
 import json
 from pydantic import BaseModel
@@ -103,11 +105,29 @@ class LitFusion(LitAPI):
         gen_pipe = AutoPipelineForText2Image.from_pipe(self.base_pipe)
         images_to_generate = min(request.get('n', 1), self.config.pipeline.max_n)
         prompt = request.get('prompt', 'A beautiful landscape')
-        width, height = request.get('size', '1024x1024').split('x')
-        guidance_scale, num_inference_steps = self.config.generation_presets.get(request.get('quality', 'standard'))
-        images = gen_pipe(prompt=prompt, width=width, height=height, guidance_scale=guidance_scale, num_inference_steps=num_inference_steps, num_images_per_prompt=images_to_generate).images
+        width, height = map(int, request.get('size', '1024x1024').split('x'))
+        quality = request.get('quality', 'standard')
+        preset = self.config.generation_presets.get(quality)
+        guidance_scale = preset.guidance_scale
+        num_inference_steps = preset.num_inference_steps
+        images = gen_pipe(
+            prompt=prompt,
+            width=width,
+            height=height,
+            guidance_scale=guidance_scale,
+            num_inference_steps=num_inference_steps,
+            num_images_per_prompt=images_to_generate
+        ).images
         for img in images:
-            yield img
+            # Serialize image to base64 string
+            buffered = io.BytesIO()
+            img.save(buffered, format="PNG")
+            img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+            # Yield a dictionary containing the serialized image
+            yield {
+                "image": img_str,
+                "response_format": request.get('response_format', 'url')
+            }
 
     def edit_images(self, request):
         edit_pipe = AutoPipelineForInpainting.from_pipe(self.base_pipe)
