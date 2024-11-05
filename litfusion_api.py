@@ -130,6 +130,13 @@ class LitFusion(LitAPI):
     def setup(self, device):
         # Initialize the model
         print("Initializing model...")
+        config_path = os.getenv("CONFIG_PATH", "model_config.json")
+        if os.path.exists(config_path):
+            with open(config_path, "r") as config_file:
+                config_data = json.load(config_file)
+                self.config = LitFusionConfig(**config_data)
+        else:
+            raise ValueError("Configuration file not found")
         scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained("ChuckMcSneed/FLUX.1-dev",
                                                                     subfolder="scheduler")
         text_encoder = CLIPTextModel.from_pretrained("openai/clip-vit-large-patch14", torch_dtype=torch.bfloat16)
