@@ -53,7 +53,7 @@ class LitFusion(LitAPI):
         self.config = None
         self.base_pipe = None
 
-    async def initialize_model(self, device):
+    def initialize_model(self, device):
         print(f"Setting up model with device '{device}'...")
         try:
             # Load configuration JSON
