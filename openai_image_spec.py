@@ -116,16 +116,15 @@ class OpenAIImageSpec(LitSpec):
         #     request_dict['image'] = convert_to_pil_image(request["image"])
         # return request_dict
 
-    def encode_response(self, output_generator: list[Dict]) -> list[Dict]:
+    def encode_response(self, output_generator: Iterator) -> Iterator[Dict]:
         logger.debug("Encoding image response")
-        encoded_responses = []
         for output in output_generator:
             logger.debug("Output: %s", output)
             if isinstance(output, dict) and "image" in output:
                 img_str = output["image"]
                 response_format = output.get('response_format', 'url')
                 if response_format == "b64_json":
-                    encoded_responses.append({"b64_json": img_str})
+                    yield {"b64_json": img_str}
                 elif response_format == "url":
                     # Save image and return URL
                     img_data = base64.b64decode(img_str)
@@ -133,10 +132,9 @@ class OpenAIImageSpec(LitSpec):
                     file_id = f"{shortuuid()}.png"
                     file_path = os.path.join(self.data_path, file_id)
                     img.save(file_path, format="PNG")
-                    encoded_responses.append({"url": f"/v1/images/data/{file_id}"})
+                    yield {"url": f"/v1/images/data/{file_id}"}
             else:
-                return {"error": "Unexpected output format"}
-        return encoded_responses
+                yield {"error": "Unexpected output format"}
 
     async def handle_images_generations_request(self, request: CreateImageRequest, background_tasks: BackgroundTasks):
         request_dict = request.model_dump()
@@ -155,14 +153,42 @@ class OpenAIImageSpec(LitSpec):
         return await self.handle_image_request(request_dict, background_tasks)
 
     async def handle_image_request(self, request: Dict, background_tasks: BackgroundTasks):
+        response_queue_id = self.response_queue_id
         logger.debug("Received image request %s", request)
-        responses = await self._server.lit_api.predict(request)
-        logger.debug(f"Got {len(responses)} responses")
-        return await self.collect_image_responses(request, responses)
+        n = request.get("n", 1)
+        uids = [uuid.uuid4() for _ in range(n)]
+        self.queues = []
+        self.events = []
+        for uid in uids:
+            request_el = request.copy()
+            request_el['n'] = 1
+            q = deque()
+            event = asyncio.Event()
+            self._server.response_buffer[uid] = (q, event)
+            self._server.request_queue.put((response_queue_id, uid, time.monotonic(), request_el))
+            self.queues.append(q)
+            self.events.append(event)
+        responses = await self.get_from_queues(uids)
+        logger.debug("Got responses from queues %s", responses)
+        response_task = asyncio.create_task(self.collect_image_responses(request, responses))
+        return await response_task
 
-    async def collect_image_responses(self, request: Dict, generator_list: List[Dict]):
+    async def get_from_queues(self, uids) -> List[AsyncGenerator]:
+        image_pipes = []
+        for uid, q, event in zip(uids, self.queues, self.events):
+            data_stream = self._server.data_streamer(q, event, send_status=True)
+            image_pipes.append(data_stream)
+        return image_pipes
+
+    async def collect_image_responses(self, request: Dict, generator_list: List[AsyncGenerator]):
         logger.debug("Collecting image responses")
-        image_responses = self.encode_response(generator_list)
+        image_responses = []
+        for response_stream in generator_list:
+            async for response, status in response_stream:
+                if status == LitAPIStatus.ERROR:
+                    raise response
+                encoded_response = json.loads(response)
+                image_responses.append(encoded_response)
         final_response = {
             "created": int(time.time()),
             "data": image_responses
