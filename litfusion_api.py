@@ -53,7 +53,7 @@ class LitFusion(LitAPI):
         self.config = None
         self.base_pipe = None
 
-    def setup(self, device):
+    async def initialize_model(self, device):
         print(f"Setting up model with device '{device}'...")
         try:
             # Load configuration JSON
@@ -122,14 +122,23 @@ class LitFusion(LitAPI):
             traceback.print_exc()
             raise e
 
+    def setup(self, device):
+        # Initialize the model
+        print("Initializing model...")
+        self.initialize_model(device)
+        print("Model initialization running as background task")
+
     def predict(self, request):
         # Logic to determine which type of request it is
         request_type = request.get('request_type')
         if request_type == "generation" and self.config.pipeline.enable_images_generations:
+            print("Predict called with generation request")
             yield from self.generate_images(request)
         elif request_type == "edit" and self.config.pipeline.enable_images_edits:
+            print("Predict called with edit request")
             yield from self.edit_images(request)
         elif request_type == "variation" and self.config.pipeline.enable_images_variations:
+            print("Predict called with variation request")
             yield from self.generate_variations(request)
         else:
             yield "Unknown or disabled request type"
