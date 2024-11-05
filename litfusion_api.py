@@ -54,59 +54,69 @@ class LitFusion(LitAPI):
         self.base_pipe = None
 
     def setup(self, device):
-        # Load configuration JSON
-        config_path = os.getenv("CONFIG_PATH", "model_config.json")
-        if os.path.exists(config_path):
-            with open(config_path, "r") as config_file:
-                config_data = json.load(config_file)
-                self.config = LitFusionConfig(**config_data)
-        else:
-            raise ValueError("Configuration file not found")
+        try:
+            # Load configuration JSON
+            config_path = os.getenv("CONFIG_PATH", "model_config.json")
+            if os.path.exists(config_path):
+                with open(config_path, "r") as config_file:
+                    config_data = json.load(config_file)
+                    self.config = LitFusionConfig(**config_data)
+            else:
+                raise ValueError("Configuration file not found")
 
-        # Load the model pipeline using AutoPipelineForText2Image
-        print("Loading model pipeline...")
-        init_dtype = get_torch_dtype(self.config.pipeline.torch_dtype_init)
-        if self.config.pipeline.enable_images_generations:
-            self.base_pipe = AutoPipelineForText2Image.from_pretrained(self.config.pipeline.hf_model_id,
-                                                                       torch_dtype=init_dtype)
-        elif self.config.pipeline.enable_images_edits:
-            self.base_pipe = AutoPipelineForInpainting.from_pretrained(self.config.pipeline.hf_model_id,
-                                                                       torch_dtype=init_dtype)
-        elif self.config.pipeline.enable_images_variations:
-            self.base_pipe = AutoPipelineForImage2Image.from_pretrained(self.config.pipeline.hf_model_id,
-                                                                        torch_dtype=init_dtype)
-        else:
-            raise ValueError(
-                "No pipeline enabled. Please enable at least one of the following: images generation, image edits, image variations")
+            # Load the model pipeline using AutoPipelineForText2Image
+            print("Loading model pipeline...")
+            init_dtype = get_torch_dtype(self.config.pipeline.torch_dtype_init)
+            if self.config.pipeline.enable_images_generations:
+                self.base_pipe = AutoPipelineForText2Image.from_pretrained(self.config.pipeline.hf_model_id,
+                                                                           torch_dtype=init_dtype)
+                print("Loaded base pipeline as image generation")
+            elif self.config.pipeline.enable_images_edits:
+                self.base_pipe = AutoPipelineForInpainting.from_pretrained(self.config.pipeline.hf_model_id,
+                                                                           torch_dtype=init_dtype)
+                print("Loaded base pipeline as image edit")
+            elif self.config.pipeline.enable_images_variations:
+                self.base_pipe = AutoPipelineForImage2Image.from_pretrained(self.config.pipeline.hf_model_id,
+                                                                            torch_dtype=init_dtype)
+                print("Loaded base pipeline as image variation")
+            else:
+                raise ValueError(
+                    "No pipeline enabled. Please enable at least one of the following: images generation, image edits, image variations")
 
-        # Apply settings before moving to GPU if necessary
-        if self.config.pipeline.enable_cpu_offload:
-            print("Enabling CPU offload...")
-            self.base_pipe.enable_sequential_cpu_offload()
-        if self.config.pipeline.enable_vae_slicing:
-            print("Enabling VAE slicing...")
-            self.base_pipe.vae.enable_slicing()
-        if self.config.pipeline.enable_vae_tiling:
-            print("Enabling VAE tiling...")
-            self.base_pipe.vae.enable_tiling()
+            # Apply settings before moving to GPU if necessary
+            if self.config.pipeline.enable_cpu_offload:
+                self.base_pipe.enable_sequential_cpu_offload()
+                print("Enabled CPU offload...")
 
-        # Move the pipeline to GPU and convert to operation dtype
-        print("Moving pipeline to runtime dtype")
-        print("Pipeline dtype:", self.base_pipe.dtype)
-        self.base_pipe.to(get_torch_dtype(self.config.pipeline.torch_dtype_run))
-        print("Move to GPU")
-        self.base_pipe.to("cuda")
-        print("Finished moving pipeline to GPU")
+            # Move the pipeline to GPU and convert to operation dtype
+            print("Moving pipeline to runtime dtype")
+            print("Pipeline runtime dtype:", self.base_pipe.dtype)
+            self.base_pipe.to(get_torch_dtype(self.config.pipeline.torch_dtype_run))
+            print("Move to GPU")
+            self.base_pipe.to("cuda")
+            print("Finished moving pipeline to GPU")
+            # Apply settings that have to be applied after moving to GPU
+            if self.config.pipeline.enable_vae_slicing:
+                self.base_pipe.vae.enable_slicing()
+                print("Enabled VAE slicing...")
+            if self.config.pipeline.enable_vae_tiling:
+                self.base_pipe.vae.enable_tiling()
+                print("Enabled VAE tiling...")
 
-        print("Model setup complete with:")
-        print(f"Model: {self.config.pipeline.hf_model_id}")
-        print(f"Max value for n: {self.config.pipeline.max_n}")
-        print(f"CPU Offload Enabled: {self.config.pipeline.enable_cpu_offload}")
-        print(f"VAE Slicing Enabled: {self.config.pipeline.enable_vae_slicing}")
-        print(f"VAE Tiling Enabled: {self.config.pipeline.enable_vae_tiling}")
-        print(f"Images Generation Enabled: {self.config.pipeline.enable_images_generations}")
-        print(f"Image Edits Enabled: {self.config.pipeline.enable_images_edits}")
-        print(f"Image Variations Enabled: {self.config.pipeline.enable_images_variations}")
+            print("Model setup complete with:")
+            print(f"Model: {self.config.pipeline.hf_model_id}")
+            print(f"Max value for n: {self.config.pipeline.max_n}")
+            print(f"CPU Offload Enabled: {self.config.pipeline.enable_cpu_offload}")
+            print(f"VAE Slicing Enabled: {self.config.pipeline.enable_vae_slicing}")
+            print(f"VAE Tiling Enabled: {self.config.pipeline.enable_vae_tiling}")
+            print(f"Images Generation Enabled: {self.config.pipeline.enable_images_generations}")
+            print(f"Image Edits Enabled: {self.config.pipeline.enable_images_edits}")
+            print(f"Image Variations Enabled: {self.config.pipeline.enable_images_variations}")
+        except Exception as e:
+            logging.error("Error during setup: %s", e)
+            import traceback
+            traceback.print_exc()
+            raise e
 
     def predict(self, request):
         # Logic to determine which type of request it is
