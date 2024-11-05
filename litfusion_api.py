@@ -1,3 +1,5 @@
+import torch
+from diffusers import AutoPipelineForText2Image, AutoPipelineForImage2Image, AutoPipelineForInpainting
 import base64
 import io
 import logging
@@ -6,8 +8,6 @@ import json
 from pydantic import BaseModel
 from PIL import Image
 from litserve import LitServer, LitAPI
-from diffusers import AutoPipelineForText2Image, AutoPipelineForImage2Image, AutoPipelineForInpainting
-import torch
 
 from openai_image_spec import OpenAIImageSpec
 
@@ -65,20 +65,23 @@ class LitFusion(LitAPI):
                 raise ValueError("Configuration file not found")
 
             # Load the model pipeline using AutoPipelineForText2Image
-            print("Loading model pipeline...")
             init_dtype = get_torch_dtype(self.config.pipeline.torch_dtype_init)
+            print(f"Loading model pipeline with init dtype {init_dtype}...")
             if self.config.pipeline.enable_images_generations:
+                print("Start loading base pipeline as image generation")
                 self.base_pipe = AutoPipelineForText2Image.from_pretrained(self.config.pipeline.hf_model_id,
                                                                            torch_dtype=init_dtype)
-                print("Loaded base pipeline as image generation")
+                print("Finished loading base pipeline as image generation")
             elif self.config.pipeline.enable_images_edits:
+                print("Start loading base pipeline as image edit")
                 self.base_pipe = AutoPipelineForInpainting.from_pretrained(self.config.pipeline.hf_model_id,
                                                                            torch_dtype=init_dtype)
-                print("Loaded base pipeline as image edit")
+                print("Finished loading base pipeline as image edit")
             elif self.config.pipeline.enable_images_variations:
+                print("Start loading base pipeline as image variation")
                 self.base_pipe = AutoPipelineForImage2Image.from_pretrained(self.config.pipeline.hf_model_id,
                                                                             torch_dtype=init_dtype)
-                print("Loaded base pipeline as image variation")
+                print("Finished loading base pipeline as image variation")
             else:
                 raise ValueError(
                     "No pipeline enabled. Please enable at least one of the following: images generation, image edits, image variations")
