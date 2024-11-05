@@ -152,6 +152,7 @@ class LitFusion(LitAPI):
         preset = self.config.generation_presets.get(quality)
         guidance_scale = preset.guidance_scale
         num_inference_steps = preset.num_inference_steps
+        print(f"Generating {images_to_generate} images with prompt '{prompt}'")
         images = gen_pipe(
             prompt=prompt,
             width=width,
