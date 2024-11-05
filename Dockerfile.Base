@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && python3.11 get-pip.py \
     && rm get-pip.py \
     && ln -sf /usr/bin/python3.11 /usr/bin/python \
-    && ln -sf /usr/local/bin/pip3.10 /usr/local/bin/pip \
+    && ln -sf /usr/local/bin/pip3.11 /usr/local/bin/pip \
     && python --version \
     && pip --version \
     && apt-get purge -y --auto-remove software-properties-common \
