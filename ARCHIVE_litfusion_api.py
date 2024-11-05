@@ -133,15 +133,15 @@ class LitFusion(LitAPI):
         request_type = request.get('request_type')
         if request_type == "generation" and self.config.pipeline.enable_images_generations:
             print("Predict called with generation request")
-            return self.generate_images(request)
+            yield from self.generate_images(request)
         elif request_type == "edit" and self.config.pipeline.enable_images_edits:
             print("Predict called with edit request")
-            return self.edit_images(request)
+            yield from self.edit_images(request)
         elif request_type == "variation" and self.config.pipeline.enable_images_variations:
             print("Predict called with variation request")
-            return self.generate_variations(request)
+            yield from self.generate_variations(request)
         else:
-            return "Unknown or disabled request type"
+            yield "Unknown or disabled request type"
 
     def generate_images(self, request):
         gen_pipe = AutoPipelineForText2Image.from_pipe(self.base_pipe)
@@ -161,18 +161,16 @@ class LitFusion(LitAPI):
             num_inference_steps=num_inference_steps,
             num_images_per_prompt=images_to_generate
         ).images
-        image_responses = []
         for img in images:
             # Serialize image to base64 string
             buffered = io.BytesIO()
             img.save(buffered, format="PNG")
             img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
             # Yield a dictionary containing the serialized image
-            image_responses.append( {
+            yield {
                 "image": img_str,
                 "response_format": request.get('response_format', 'url')
-            })
-        return image_responses
+            }
 
     def edit_images(self, request):
         edit_pipe = AutoPipelineForInpainting.from_pipe(self.base_pipe)
