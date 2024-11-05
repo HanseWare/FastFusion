@@ -54,6 +54,7 @@ class LitFusion(LitAPI):
         self.base_pipe = None
 
     def setup(self, device):
+        print(f"Setting up model with device '{device}'...")
         try:
             # Load configuration JSON
             config_path = os.getenv("CONFIG_PATH", "model_config.json")
@@ -213,6 +214,12 @@ if __name__ == "__main__":
     api = LitFusion()
     # get loglevel from env
     loglevel = os.getenv("LITFUSION_LOGLEVEL", "info")
-    logging.basicConfig(level=getattr(logging, loglevel.upper(), logging.INFO))
-    server = LitServer(api, spec=OpenAIImageSpec())
+    print("Setting log level from env to", loglevel)
+    if loglevel == "debug":
+        from transformers import logging as transformers_logging
+        from diffusers.utils import logging as diffusers_logging
+        transformers_logging.set_verbosity_debug()
+        diffusers_logging.set_verbosity_debug()
+        logging.basicConfig(level=logging.DEBUG)
+    server = LitServer(api, spec=OpenAIImageSpec(), accelerator="cuda")
     server.run(port=8000, log_level=loglevel)
