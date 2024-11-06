@@ -1,3 +1,7 @@
+import time
+import uuid
+from typing import Iterator, Dict
+
 import torch
 from diffusers import AutoPipelineForText2Image, AutoPipelineForImage2Image, AutoPipelineForInpainting
 import base64
@@ -8,6 +12,7 @@ import json
 from pydantic import BaseModel
 from PIL import Image
 from litserve import LitServer, LitAPI
+from starlette.responses import JSONResponse
 
 from openai_image_spec import OpenAIImageSpec
 
@@ -213,6 +218,31 @@ class LitFusion(LitAPI):
                 "response_format": request.get('response_format', 'url')
             }
 
+    def encode_response(self, output_generator: Iterator):
+        print("Encoding image response")
+        final_responses = []
+        for output in output_generator:
+            print("Output: %s", output)
+            if isinstance(output, dict) and "image" in output:
+                img_str = output["image"]
+                response_format = output.get('response_format', 'url')
+                if response_format == "b64_json":
+                    final_responses.append({"b64_json": img_str})
+                elif response_format == "url":
+                    # Save image and return URL
+                    img_data = base64.b64decode(img_str)
+                    img = Image.open(io.BytesIO(img_data))
+                    file_id = f"{shortuuid()}.png"
+                    file_path = os.path.join(self.data_path, file_id)
+                    img.save(file_path, format="PNG")
+                    final_responses.append({"url": f"/v1/images/data/{file_id}"})
+            else:
+                raise {"error": "Unexpected output format"}
+        return JSONResponse({"created": time.time(), "data": final_responses})
+
+def shortuuid():
+    return uuid.uuid4().hex[:6]
+
 
 if __name__ == "__main__":
     api = LitFusion()
@@ -225,5 +255,5 @@ if __name__ == "__main__":
         transformers_logging.set_verbosity_debug()
         diffusers_logging.set_verbosity_debug()
         logging.basicConfig(level=logging.DEBUG)
-    server = LitServer(api, spec=OpenAIImageSpec(), accelerator="cuda")
+    server = LitServer(api, accelerator="cuda")
     server.run(port=8000, log_level=loglevel)
