@@ -1,4 +1,4 @@
-litserve~=0.2.3
+litserve~=0.2.5.dev0
 pillow~=10.3.0
 tokenizers~=0.20.2
 transformers~=4.46.1
