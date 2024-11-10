@@ -6,7 +6,7 @@ import threading
 from typing import Dict, List
 
 import torch
-from diffusers import AutoPipelineForText2Image, AutoPipelineForImage2Image, AutoPipelineForInpainting
+from diffusers import AutoPipelineForText2Image, AutoPipelineForImage2Image, AutoPipelineForInpainting, ConfigMixin
 import base64
 import io
 import logging
@@ -20,9 +20,16 @@ from pydantic_models import *
 
 logger = logging.getLogger(__name__)
 
-pipe_config = None
-base_pipe = None
-data_path = os.getenv("IMAGE_DATA_PATH", "/data")
+class FastFusionApp(FastAPI):
+    pipe_config: FastFusionConfig | None
+    base_pipe: ConfigMixin | None
+    data_path: str
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.pipe_config = None
+        self.base_pipe = None
+        self.data_path = os.getenv("IMAGE_DATA_PATH", "/data")
+
 
 
 def shortuuid():
@@ -120,8 +127,6 @@ def setup(device):
             pipe.vae.enable_tiling()
             print("Enabled VAE tiling...")
 
-        pipe_config = config
-        base_pipe = pipe
         print("Model setup complete with:")
         print(f"Model: {config.pipeline.hf_model_id}")
         print(f"Max value for n: {config.pipeline.max_n}")
@@ -131,6 +136,7 @@ def setup(device):
         print(f"Images Generation Enabled: {config.pipeline.enable_images_generations}")
         print(f"Image Edits Enabled: {config.pipeline.enable_images_edits}")
         print(f"Image Variations Enabled: {config.pipeline.enable_images_variations}")
+        return pipe, config, data_path
     except Exception as e:
         logging.error("Error during setup: %s", e)
         import traceback
@@ -142,29 +148,32 @@ def setup(device):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Load the ML model
-    setup("cuda")
+    pipe, config, data_path = setup("cuda")
+    app.base_pipe = pipe
+    app.pipe_config = config
+    app.data_path = data_path
     yield
     # Clean up the ML models and release the resources
     app.base_pipe = None
     app.pipe_config = None
 
-fastfusion_app = FastAPI(lifespan=lifespan)
+fastfusion_app = FastFusionApp(lifespan=lifespan)
 
 @fastfusion_app.middleware("http")
 async def ensure_model_ready(request: Request, call_next):
-    if base_pipe is None:
+    if request.app.base_pipe is None:
         raise HTTPException(status_code=503, detail="Model not ready")
     response = await call_next(request)
     return response
 
 @fastfusion_app.post("/v1/images/generations")
-async def generate_images(self, request: CreateImageRequest):
-    gen_pipe = AutoPipelineForText2Image.from_pipe(fastfusion_app.base_pipe)
-    images_to_generate = min(request.get('n', 1), fastfusion_app.pipe_config.pipeline.max_n)
-    prompt = request.get('prompt', 'A beautiful landscape')
-    width, height = map(int, request.get('size', '1024x1024').split('x'))
-    quality = request.get('quality', 'standard')
-    preset = fastfusion_app.pipe_config.generation_presets.get(quality)
+async def generate_images(request: Request, body: CreateImageRequest):
+    gen_pipe = AutoPipelineForText2Image.from_pipe(request.app.base_pipe)
+    images_to_generate = min(body.n or 1, request.app.pipe_config.pipeline.max_n)
+    prompt = body.prompt or 'A beautiful landscape'
+    width, height = map(int, (body.size or '1024x1024').split('x'))
+    quality = body.quality or 'standard'
+    preset = request.app.pipe_config.generation_presets.get(quality)
     guidance_scale = preset.guidance_scale
     num_inference_steps = preset.num_inference_steps
     print(f"Generating {images_to_generate} images with prompt '{prompt}'")
@@ -176,43 +185,42 @@ async def generate_images(self, request: CreateImageRequest):
         num_inference_steps=num_inference_steps,
         num_images_per_prompt=images_to_generate
     ).images
-    return self.encode_response(images, request.get('response_format', 'url'))
+    return encode_response(images, body.response_format or 'url', request)
 
 
 @fastfusion_app.post("/v1/images/edits")
-async def edit_images(self, request: CreateImageEditRequest):
-    edit_pipe = AutoPipelineForInpainting.from_pipe(fastfusion_app.base_pipe)
-    images_to_generate = min(request.get('n', 1), fastfusion_app.pipe_config.pipeline.max_n)
-    prompt = request.get('prompt', 'Edit the image to look more vibrant')
-    init_image_data = request.get('image')
-    init_image = convert_to_pil_image(init_image_data)
-    mask_image_data = request.get('mask')
-    mask_image = convert_to_pil_image(mask_image_data) if mask_image_data else None
+async def edit_images(request: Request, body: CreateImageEditRequest):
+    edit_pipe = AutoPipelineForInpainting.from_pipe(request.app.base_pipe)
+    images_to_generate = min(body.n or 1, request.app.pipe_config.pipeline.max_n)
+    prompt = body.prompt or 'Edit the image to look more vibrant'
+    init_image = convert_to_pil_image(body.image)
+    mask_image = convert_to_pil_image(body.mask) if body.mask else None
     images = edit_pipe(
         prompt=prompt,
         image=init_image,
         mask_image=mask_image,
         num_images_per_prompt=images_to_generate
     ).images
-    return self.encode_response(images, request.get('response_format', 'url'))
+    return encode_response(images, body.response_format or 'url', request)
+
 
 
 @fastfusion_app.post("/v1/images/variations")
-async def generate_variations(self, request: CreateImageVariationRequest):
-    var_pipe = AutoPipelineForImage2Image.from_pipe(fastfusion_app.base_pipe)
-    images_to_generate = min(request.get('n', 1), fastfusion_app.pipe_config.pipeline.max_n)
-    prompt = request.get('prompt', 'Generate variations')
-    init_image_data = request.get('image')
-    init_image = convert_to_pil_image(init_image_data)
+async def generate_variations(request: Request, body: CreateImageVariationRequest):
+    var_pipe = AutoPipelineForImage2Image.from_pipe(request.app.base_pipe)
+    images_to_generate = min(body.n or 1, request.app.pipe_config.pipeline.max_n)
+    prompt = body.prompt or 'Generate variations'
+    init_image = convert_to_pil_image(body.image)
     images = var_pipe(
         prompt=prompt,
         image=init_image,
         num_images_per_prompt=images_to_generate
     ).images
-    return self.encode_response(images, request.get('response_format', 'url'))
+    return encode_response(images, body.response_format or 'url', request)
 
 
-def encode_response(self, images, response_format) -> Response:
+
+def encode_response(images, response_format, request: Request) -> Response:
     logger.debug("Encoding image response")
     image_responses = []
     for image in images:
@@ -227,7 +235,7 @@ def encode_response(self, images, response_format) -> Response:
             img_data = base64.b64decode(img_str)
             img = Image.open(io.BytesIO(img_data))
             file_id = f"{shortuuid()}.png"
-            file_path = os.path.join(self.data_path, file_id)
+            file_path = os.path.join(request.app.data_path, file_id)
             img.save(file_path, format="PNG")
             image_responses.append({"url": f"/v1/images/data/{file_id}"})
         else:
@@ -240,12 +248,14 @@ def encode_response(self, images, response_format) -> Response:
     return Response(content=json.dumps(final_response), media_type="application/json")
 
 
+
 @fastfusion_app.get("/v1/images/data/{file_id}")
-async def get_image_data(self, file_id: str):
-    file_path = os.path.join(self.data_path, file_id)
+async def get_image_data(request: Request, file_id: str):
+    file_path = os.path.join(request.app.data_path, file_id)
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="Image not found")
     return Response(content=open(file_path, "rb").read(), media_type="image/png")
+
 
 
 if __name__ == "__main__":
