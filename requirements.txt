@@ -11,3 +11,4 @@ torch==2.2.1
 numpy==1.26.4
 sentence-transformers==2.7.0
 sentencepiece==0.2.0
+python-multipart==0.0.17
