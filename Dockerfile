@@ -5,6 +5,7 @@ COPY *.py /app/
 COPY model_config.json /app/model_config.json
 ENV FASTFUSION_LOGLEVEL=info
 # Make port 8000 available to the world outside this container
-EXPOSE 8000
+EXPOSE 9999
 # Run the application
-CMD ["uvicorn", "app:fastfusion_app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "/app/app.py"]
+#CMD ["uvicorn", "app:fastfusion_app", "--host", "0.0.0.0", "--port", "8000"]

@@ -195,6 +195,7 @@ async def edit_images(request: Request, body: CreateImageEditRequest):
     prompt = body.prompt or 'Edit the image to look more vibrant'
     init_image = convert_to_pil_image(body.image)
     mask_image = convert_to_pil_image(body.mask) if body.mask else None
+    logger.info(f"Editing image with prompt '{prompt}'")
     images = edit_pipe(
         prompt=prompt,
         image=init_image,
