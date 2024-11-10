@@ -8,12 +8,12 @@ from typing import Dict, List
 import torch
 from diffusers import AutoPipelineForText2Image, AutoPipelineForImage2Image, AutoPipelineForInpainting, ConfigMixin
 import base64
-import io
+from io import BytesIO
 import logging
 import os
 import json
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response, Form, UploadFile, File
 from PIL import Image
 
 from pydantic_models import *
@@ -47,7 +47,7 @@ def convert_to_pil_image(image_data: str) -> Image.Image:
     else:
         image_bytes = image_data.encode('latin1')
 
-    image = Image.open(io.BytesIO(image_bytes))
+    image = Image.open(BytesIO(image_bytes))
     return image
 
 
@@ -189,20 +189,36 @@ async def generate_images(request: Request, body: CreateImageRequest):
 
 
 @fastfusion_app.post("/v1/images/edits")
-async def edit_images(request: Request, body: CreateImageEditRequest):
-    edit_pipe = AutoPipelineForInpainting.from_pipe(request.app.base_pipe)
-    images_to_generate = min(body.n or 1, request.app.pipe_config.pipeline.max_n)
-    prompt = body.prompt or 'Edit the image to look more vibrant'
-    init_image = convert_to_pil_image(body.image)
-    mask_image = convert_to_pil_image(body.mask) if body.mask else None
-    logger.info(f"Editing image with prompt '{prompt}'")
-    images = edit_pipe(
-        prompt=prompt,
-        image=init_image,
-        mask_image=mask_image,
-        num_images_per_prompt=images_to_generate
-    ).images
-    return encode_response(images, body.response_format or 'url', request)
+async def edit_images(
+    request: Request,
+    prompt: str = Form(...),
+    image: UploadFile = File(...),
+    mask: UploadFile = File(None),
+    n: int = Form(1),
+    response_format: str = Form('url')
+):
+    try:
+        edit_pipe = AutoPipelineForInpainting.from_pipe(request.app.base_pipe)
+        images_to_generate = min(n, request.app.pipe_config.pipeline.max_n)
+
+        # Read the uploaded files
+        image_data = await image.read()
+        mask_data = await mask.read() if mask is not None else None
+
+        # Convert bytes to PIL Images
+        init_image = Image.open(BytesIO(image_data)).convert("RGB")
+        mask_image = Image.open(BytesIO(mask_data)).convert("RGB") if mask_data else None
+
+        images = edit_pipe(
+            prompt=prompt,
+            image=init_image,
+            mask_image=mask_image,
+            num_images_per_prompt=images_to_generate
+        ).images
+        return encode_response(images, response_format, request)
+    except Exception as e:
+        logging.error(f"Error during image editing: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 
@@ -225,7 +241,7 @@ def encode_response(images, response_format, request: Request) -> Response:
     logger.debug("Encoding image response")
     image_responses = []
     for image in images:
-        buffered = io.BytesIO()
+        buffered = BytesIO()
         image.save(buffered, format="PNG")
         img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
         logger.debug("Output: %s", image)
@@ -234,7 +250,7 @@ def encode_response(images, response_format, request: Request) -> Response:
         elif response_format == "url":
             # Save image and return URL
             img_data = base64.b64decode(img_str)
-            img = Image.open(io.BytesIO(img_data))
+            img = Image.open(BytesIO(img_data))
             file_id = f"{shortuuid()}.png"
             file_path = os.path.join(request.app.data_path, file_id)
             img.save(file_path, format="PNG")
