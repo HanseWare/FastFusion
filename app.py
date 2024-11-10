@@ -195,7 +195,12 @@ async def edit_images(
     image: UploadFile = File(...),
     mask: UploadFile = File(None),
     n: int = Form(1),
-    response_format: str = Form('url')
+    response_format: str = Form('url'),
+    model: Optional[str] = "flux.1-dev",
+    size: Optional[str] = "1024x1024",
+    user: Optional[str] = None,  # Ignored
+    guidance_scale: Optional[float] = 7.0,  # Addon over openAI
+    num_inference_steps: Optional[int] = 50  # Addon over openAI
 ):
     try:
         edit_pipe = AutoPipelineForInpainting.from_pipe(request.app.base_pipe)
@@ -213,7 +218,10 @@ async def edit_images(
             prompt=prompt,
             image=init_image,
             mask_image=mask_image,
-            num_images_per_prompt=images_to_generate
+            num_images_per_prompt=images_to_generate,
+            guidance_scale=guidance_scale,
+            num_inference_steps=num_inference_steps,
+            size=size
         ).images
         return encode_response(images, response_format, request)
     except Exception as e:
