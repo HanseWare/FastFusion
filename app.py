@@ -114,7 +114,7 @@ def setup(device):
 
         # Move the pipeline to GPU and convert to operation dtype
         logger.info("Moving pipeline to runtime dtype")
-        logger.info("Pipeline runtime dtype:", config.pipeline.torch_dtype_run)
+        logger.info(f"Pipeline runtime dtype: {config.pipeline.torch_dtype_run}")
         pipe.to(get_torch_dtype(config.pipeline.torch_dtype_run))
         logger.info("Move to GPU")
         pipe.to("cuda")
