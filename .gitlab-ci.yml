@@ -7,7 +7,7 @@ stages:
 variables:
   DOCKER_BUILDKIT: 1
 
-build-LitFusion-Base:
+build-FastFusion-Base:
   stage: build-base
   services: [ "docker:24-dind" ]
   rules:
@@ -20,7 +20,7 @@ build-LitFusion-Base:
     - docker build -t cyb4black/fastfusion-base:latest -f Dockerfile.Base .
     - docker push cyb4black/fastfusion-base:latest
 
-build-LitFusion:
+build-FastFusion:
   stage: build
   services: [ "docker:24-dind" ]
   rules:
