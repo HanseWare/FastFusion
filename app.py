@@ -20,28 +20,13 @@ from pydantic_models import *
 
 logger = logging.getLogger(__name__)
 
-
-class FastFusionApp(FastAPI):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.pipe_config = None
-        self.base_pipe = None
-        self.data_path = os.getenv("IMAGE_DATA_PATH", "/data")
-
-
-fastfusion_app = FastFusionApp()
+pipe_config = None
+base_pipe = None
+data_path = os.getenv("IMAGE_DATA_PATH", "/data")
 
 
 def shortuuid():
     return uuid.uuid4().hex[:6]
-
-
-@fastfusion_app.middleware("http")
-async def ensure_model_ready(request: Request, call_next):
-    if not hasattr(fastfusion_app, "base_pipe"):
-        raise HTTPException(status_code=503, detail="Model not ready")
-    response = await call_next(request)
-    return response
 
 
 def get_torch_dtype(dtype_name):
@@ -98,17 +83,17 @@ def setup(device):
         print(f"Loading model pipeline with init dtype {init_dtype}...")
         if config.pipeline.enable_images_generations:
             print("Start loading base pipeline as image generation")
-            base_pipe = AutoPipelineForText2Image.from_pretrained(config.pipeline.hf_model_id,
+            pipe = AutoPipelineForText2Image.from_pretrained(config.pipeline.hf_model_id,
                                                                   torch_dtype=init_dtype)
             print("Finished loading base pipeline as image generation")
         elif config.pipeline.enable_images_edits:
             print("Start loading base pipeline as image edit")
-            base_pipe = AutoPipelineForInpainting.from_pretrained(config.pipeline.hf_model_id,
+            pipe = AutoPipelineForInpainting.from_pretrained(config.pipeline.hf_model_id,
                                                                   torch_dtype=init_dtype)
             print("Finished loading base pipeline as image edit")
         elif config.pipeline.enable_images_variations:
             print("Start loading base pipeline as image variation")
-            base_pipe = AutoPipelineForImage2Image.from_pretrained(config.pipeline.hf_model_id,
+            pipe = AutoPipelineForImage2Image.from_pretrained(config.pipeline.hf_model_id,
                                                                    torch_dtype=init_dtype)
             print("Finished loading base pipeline as image variation")
         else:
@@ -117,26 +102,26 @@ def setup(device):
 
         # Apply settings before moving to GPU if necessary
         if config.pipeline.enable_cpu_offload:
-            base_pipe.enable_sequential_cpu_offload()
+            pipe.enable_sequential_cpu_offload()
             print("Enabled CPU offload...")
 
         # Move the pipeline to GPU and convert to operation dtype
         print("Moving pipeline to runtime dtype")
-        print("Pipeline runtime dtype:", base_pipe.dtype)
-        base_pipe.to(get_torch_dtype(config.pipeline.torch_dtype_run))
+        print("Pipeline runtime dtype:", pipe.dtype)
+        pipe.to(get_torch_dtype(config.pipeline.torch_dtype_run))
         print("Move to GPU")
-        base_pipe.to("cuda")
+        pipe.to("cuda")
         print("Finished moving pipeline to GPU")
         # Apply settings that have to be applied after moving to GPU
         if config.pipeline.enable_vae_slicing:
-            base_pipe.vae.enable_slicing()
+            pipe.vae.enable_slicing()
             print("Enabled VAE slicing...")
         if config.pipeline.enable_vae_tiling:
-            base_pipe.vae.enable_tiling()
+            pipe.vae.enable_tiling()
             print("Enabled VAE tiling...")
 
-        fastfusion_app.pipe_config = config
-        fastfusion_app.base_pipe = base_pipe
+        pipe_config = config
+        base_pipe = pipe
         print("Model setup complete with:")
         print(f"Model: {config.pipeline.hf_model_id}")
         print(f"Max value for n: {config.pipeline.max_n}")
@@ -155,7 +140,7 @@ def setup(device):
 
 # Run above setup() function in seperate thread on FastAPI app startup
 @asynccontextmanager
-async def lifespan(app: FastFusionApp):
+async def lifespan(app: FastAPI):
     # Load the ML model
     setup("cuda")
     yield
@@ -163,6 +148,14 @@ async def lifespan(app: FastFusionApp):
     app.base_pipe = None
     app.pipe_config = None
 
+fastfusion_app = FastAPI(lifespan=lifespan)
+
+@fastfusion_app.middleware("http")
+async def ensure_model_ready(request: Request, call_next):
+    if base_pipe is None:
+        raise HTTPException(status_code=503, detail="Model not ready")
+    response = await call_next(request)
+    return response
 
 @fastfusion_app.post("/v1/images/generations")
 async def generate_images(self, request: CreateImageRequest):
