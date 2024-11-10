@@ -74,7 +74,7 @@ def setup(device):
     # Launch cleanup thread
     cleanup_thread = threading.Thread(target=clean_old_images, args=(data_path,), daemon=True)
     cleanup_thread.start()
-    print(f"Setting up model with device '{device}'...")
+    logger.info(f"Setting up model with device '{device}'...")
     try:
         # Load configuration JSON
         config_path = os.getenv("CONFIG_PATH", "model_config.json")
@@ -87,22 +87,22 @@ def setup(device):
 
         # Load the model pipeline using AutoPipelineForText2Image
         init_dtype = get_torch_dtype(config.pipeline.torch_dtype_init)
-        print(f"Loading model pipeline with init dtype {init_dtype}...")
+        logger.info(f"Loading model pipeline with init dtype {init_dtype}...")
         if config.pipeline.enable_images_generations:
-            print("Start loading base pipeline as image generation")
+            logger.info("Start loading base pipeline as image generation")
             pipe = AutoPipelineForText2Image.from_pretrained(config.pipeline.hf_model_id,
                                                                   torch_dtype=init_dtype)
-            print("Finished loading base pipeline as image generation")
+            logger.info("Finished loading base pipeline as image generation")
         elif config.pipeline.enable_images_edits:
-            print("Start loading base pipeline as image edit")
+            logger.info("Start loading base pipeline as image edit")
             pipe = AutoPipelineForInpainting.from_pretrained(config.pipeline.hf_model_id,
                                                                   torch_dtype=init_dtype)
-            print("Finished loading base pipeline as image edit")
+            logger.info("Finished loading base pipeline as image edit")
         elif config.pipeline.enable_images_variations:
-            print("Start loading base pipeline as image variation")
+            logger.info("Start loading base pipeline as image variation")
             pipe = AutoPipelineForImage2Image.from_pretrained(config.pipeline.hf_model_id,
                                                                    torch_dtype=init_dtype)
-            print("Finished loading base pipeline as image variation")
+            logger.info("Finished loading base pipeline as image variation")
         else:
             raise ValueError(
                 "No pipeline enabled. Please enable at least one of the following: images generation, image edits, image variations")
@@ -110,32 +110,32 @@ def setup(device):
         # Apply settings before moving to GPU if necessary
         if config.pipeline.enable_cpu_offload:
             pipe.enable_sequential_cpu_offload()
-            print("Enabled CPU offload...")
+            logger.info("Enabled CPU offload...")
 
         # Move the pipeline to GPU and convert to operation dtype
-        print("Moving pipeline to runtime dtype")
-        print("Pipeline runtime dtype:", pipe.dtype)
+        logger.info("Moving pipeline to runtime dtype")
+        logger.info("Pipeline runtime dtype:", pipe.dtype)
         pipe.to(get_torch_dtype(config.pipeline.torch_dtype_run))
-        print("Move to GPU")
+        logger.info("Move to GPU")
         pipe.to("cuda")
-        print("Finished moving pipeline to GPU")
+        logger.info("Finished moving pipeline to GPU")
         # Apply settings that have to be applied after moving to GPU
         if config.pipeline.enable_vae_slicing:
             pipe.vae.enable_slicing()
-            print("Enabled VAE slicing...")
+            logger.info("Enabled VAE slicing...")
         if config.pipeline.enable_vae_tiling:
             pipe.vae.enable_tiling()
-            print("Enabled VAE tiling...")
+            logger.info("Enabled VAE tiling...")
 
-        print("Model setup complete with:")
-        print(f"Model: {config.pipeline.hf_model_id}")
-        print(f"Max value for n: {config.pipeline.max_n}")
-        print(f"CPU Offload Enabled: {config.pipeline.enable_cpu_offload}")
-        print(f"VAE Slicing Enabled: {config.pipeline.enable_vae_slicing}")
-        print(f"VAE Tiling Enabled: {config.pipeline.enable_vae_tiling}")
-        print(f"Images Generation Enabled: {config.pipeline.enable_images_generations}")
-        print(f"Image Edits Enabled: {config.pipeline.enable_images_edits}")
-        print(f"Image Variations Enabled: {config.pipeline.enable_images_variations}")
+        logger.info("Model setup complete with:")
+        logger.info(f"Model: {config.pipeline.hf_model_id}")
+        logger.info(f"Max value for n: {config.pipeline.max_n}")
+        logger.info(f"CPU Offload Enabled: {config.pipeline.enable_cpu_offload}")
+        logger.info(f"VAE Slicing Enabled: {config.pipeline.enable_vae_slicing}")
+        logger.info(f"VAE Tiling Enabled: {config.pipeline.enable_vae_tiling}")
+        logger.info(f"Images Generation Enabled: {config.pipeline.enable_images_generations}")
+        logger.info(f"Image Edits Enabled: {config.pipeline.enable_images_edits}")
+        logger.info(f"Image Variations Enabled: {config.pipeline.enable_images_variations}")
         return pipe, config, data_path
     except Exception as e:
         logging.error("Error during setup: %s", e)
@@ -176,7 +176,7 @@ async def generate_images(request: Request, body: CreateImageRequest):
     preset = request.app.pipe_config.generation_presets.get(quality)
     guidance_scale = preset.guidance_scale
     num_inference_steps = preset.num_inference_steps
-    print(f"Generating {images_to_generate} images with prompt '{prompt}'")
+    logger.info(f"Generating {images_to_generate} images with prompt '{prompt}'")
     images = gen_pipe(
         prompt=prompt,
         width=width,
@@ -263,7 +263,7 @@ if __name__ == "__main__":
 
     # get loglevel from env
     loglevel = os.getenv("FASTFUSION_LOGLEVEL", "info")
-    print("Setting log level from env to", loglevel)
+    logger.info("Setting log level from env to", loglevel)
     if loglevel == "debug":
         from transformers import logging as transformers_logging
         from diffusers.utils import logging as diffusers_logging
