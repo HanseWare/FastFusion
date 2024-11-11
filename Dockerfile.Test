@@ -1,4 +1,4 @@
-# Change CUDA and cuDNN version here
+# Dockerfile to determine if python versions work correctly
 FROM nvcr.io/nvidia/cuda:12.2.2-cudnn8-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -21,17 +21,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-####### Add your own installation commands here #######
-# RUN pip install some-package
-# RUN wget https://path/to/some/data/or/weights
-# RUN apt-get update && apt-get install -y <package-name>
-
-WORKDIR /app
-# Copy LICENSE, README and requirements.txt
-COPY requirements.txt /app/requirements.txt
-COPY LICENSE /app/LICENSE
-COPY README.md /app/README.md
-
-# Install litserve and requirements
-RUN pip3.11 install --no-cache-dir -r requirements.txt
-
+RUN python --version
+RUN pip --version
+RUN python3 --version
+RUN pip3 --version
+RUN python3.11 --version
+RUN pip3.11 --version

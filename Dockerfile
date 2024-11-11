@@ -7,5 +7,5 @@ ENV FASTFUSION_LOGLEVEL=info
 # Make port 8000 available to the world outside this container
 EXPOSE 9999
 # Run the application
-CMD ["python", "/app/app.py"]
-#CMD ["uvicorn", "app:fastfusion_app", "--host", "0.0.0.0", "--port", "8000"]
+#CMD ["python3.11", "/app/app.py"]
+CMD ["python3.11", "-m", "uvicorn", "app:fastfusion_app", "--host", "0.0.0.0", "--port", "9999"]
