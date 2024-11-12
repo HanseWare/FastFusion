@@ -213,6 +213,7 @@ async def edit_images(
         # Convert bytes to PIL Images
         init_image = Image.open(BytesIO(image_data)).convert("RGB")
         mask_image = Image.open(BytesIO(mask_data)).convert("RGB") if mask_data else None
+        width, height = map(int, (size or '1024x1024').split('x'))
 
         images = edit_pipe(
             prompt=prompt,
@@ -221,7 +222,8 @@ async def edit_images(
             num_images_per_prompt=images_to_generate,
             guidance_scale=guidance_scale,
             num_inference_steps=num_inference_steps,
-            size=size
+            width=width,
+            height=height
         ).images
         return encode_response(images, response_format, request)
     except Exception as e:
