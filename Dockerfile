@@ -8,4 +8,4 @@ ENV FASTFUSION_LOGLEVEL=info
 EXPOSE 9999
 # Run the application
 #CMD ["python3.11", "/app/app.py"]
-CMD ["python3.11", "-m", "uvicorn", "app:fastfusion_app", "--host", "0.0.0.0", "--port", "9999"]
+CMD ["python", "-m", "uvicorn", "app:fastfusion_app", "--host", "0.0.0.0", "--port", "9999"]
