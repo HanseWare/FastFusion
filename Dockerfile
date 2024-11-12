@@ -1,4 +1,4 @@
-FROM cyb4black/litfusion-base:latest
+FROM cyb4black/fastfusion-base:latest
 # Now copy python files and config file, not needed while installation but needed while running
 # so we have a small layer and build time is faster when onyl changing code
 COPY *.py /app/
