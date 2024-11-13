@@ -24,11 +24,15 @@ class FastFusionApp(FastAPI):
     pipe_config: FastFusionConfig | None
     base_pipe: ConfigMixin | None
     data_path: str
+    base_url: str
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.pipe_config = None
         self.base_pipe = None
         self.data_path = os.getenv("IMAGE_DATA_PATH", "/data")
+        self.base_url = os.getenv("BASE_URL")
+        if self.base_url is None:
+            raise ValueError("BASE_URL environment variable is required")
 
 
 
@@ -264,7 +268,7 @@ def encode_response(images, response_format, request: Request) -> Response:
             file_id = f"{shortuuid()}.png"
             file_path = os.path.join(request.app.data_path, file_id)
             img.save(file_path, format="PNG")
-            image_responses.append({"url": f"/v1/images/data/{file_id}"})
+            image_responses.append({"url": f"{fastfusion_app.base_url}/v1/images/data/{file_id}"})
         else:
             raise HTTPException(status_code=500, detail="Unexpected output format")
 
