@@ -288,6 +288,10 @@ async def get_image_data(request: Request, file_id: str):
     return Response(content=open(file_path, "rb").read(), media_type="image/png")
 
 
+@fastfusion_app.get("/health")
+async def health():
+    return {"status": "ok"}
+
 
 if __name__ == "__main__":
     import uvicorn
