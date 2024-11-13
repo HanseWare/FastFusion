@@ -4,8 +4,10 @@ FROM cyb4black/fastfusion-base:latest
 COPY *.py /app/
 COPY model_config.json /app/model_config.json
 ENV FASTFUSION_LOGLEVEL=info
+ENV FASTFUSION_HOST=0.0.0.0
+ENV FASTFUSION_PORT=9999
 # Make port 8000 available to the world outside this container
 EXPOSE 9999
 # Run the application
-#CMD ["python3.11", "/app/app.py"]
-CMD ["python", "-m", "uvicorn", "app:fastfusion_app", "--host", "0.0.0.0", "--port", "9999"]
+CMD ["python", "/app/app.py"]
+#CMD ["python", "-m", "uvicorn", "app:fastfusion_app", "--host", "0.0.0.0", "--port", "9999"]

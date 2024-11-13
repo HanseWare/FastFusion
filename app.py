@@ -306,4 +306,6 @@ if __name__ == "__main__":
         transformers_logging.set_verbosity_debug()
         diffusers_logging.set_verbosity_debug()
         logging.basicConfig(level=logging.DEBUG)
-    uvicorn.run(fastfusion_app, host="0.0.0.0", port=9999)
+    host = os.getenv("FASTFUSION_HOST", "0.0.0.0")
+    port = int(os.getenv("FASTFUSION_PORT", 9999))
+    uvicorn.run(fastfusion_app, host=host, port=port)
