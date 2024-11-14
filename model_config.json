@@ -8,9 +8,16 @@
     "enable_cpu_offload": false,
     "enable_vae_slicing": true,
     "enable_vae_tiling": true,
+    "global_guidance_scale": 7.0,
+    "global_num_inference_steps": 50,
     "enable_images_generations": true,
     "enable_images_edits": true,
-    "enable_images_variations": true
+    "variations_config": {
+      "enable_images_variations": true,
+      "vision_model": "gpt-4o",
+      "vision_model_host": "https://api.openai.com",
+      "vision_model_api_key_variable": "OPENAI_API_KEY"
+    }
   },
   "generation_presets": {
     "standard": {

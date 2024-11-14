@@ -39,6 +39,11 @@ class CreateImageVariationRequest(BaseModel):
     strength: Optional[float] = 0.75  # Addon over openAI
     guidance_scale: Optional[float] = 0.0  # Addon over openAI
 
+class VariationsConfig(BaseModel):
+    enable_images_variations: bool
+    vision_model: str = "gpt-4o"
+    vision_model_host: str = "https://api.openai.com"
+    vision_model_api_key_variable: Optional[str]
 
 class PipelineConfig(BaseModel):
     hf_model_id: str
@@ -46,9 +51,11 @@ class PipelineConfig(BaseModel):
     torch_dtype_init: str
     torch_dtype_run: str
     enable_cpu_offload: bool
+    global_guidance_scale: float
+    global_num_inference_steps: int
     enable_images_generations: bool
     enable_images_edits: bool
-    enable_images_variations: bool
+    variations_config: VariationsConfig
     enable_vae_slicing: bool
     enable_vae_tiling: bool
 

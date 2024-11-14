@@ -15,6 +15,7 @@ import json
 
 from fastapi import FastAPI, HTTPException, Request, Response, Form, UploadFile, File
 from PIL import Image
+import openai
 
 from pydantic_models import *
 
@@ -89,6 +90,11 @@ def setup(device):
         else:
             raise ValueError("Configuration file not found")
 
+        if (not config.pipeline.variations_config.vision_model_host) or (not config.pipeline.variations_config.vision_model):
+            config.pipeline.variations_config.enable_images_variations = False
+        elif config.pipeline.variations_config.enable_images_variations:
+            config.pipeline.variations_config.vision_model_api_key = os.getenv(config.pipeline.variations_config.vision_model_api_key_variable, "ignored")
+
         # Load the model pipeline using AutoPipelineForText2Image
         init_dtype = get_torch_dtype(config.pipeline.torch_dtype_init)
         logger.info(f"Loading model pipeline with init dtype {init_dtype}...")
@@ -102,7 +108,7 @@ def setup(device):
             pipe = AutoPipelineForInpainting.from_pretrained(config.pipeline.hf_model_id,
                                                                   torch_dtype=init_dtype)
             logger.info("Finished loading base pipeline as image edit")
-        elif config.pipeline.enable_images_variations:
+        elif config.pipeline.variations_config.enable_images_variations:
             logger.info("Start loading base pipeline as image variation")
             pipe = AutoPipelineForImage2Image.from_pretrained(config.pipeline.hf_model_id,
                                                                    torch_dtype=init_dtype)
@@ -139,7 +145,7 @@ def setup(device):
         logger.info(f"VAE Tiling Enabled: {config.pipeline.enable_vae_tiling}")
         logger.info(f"Images Generation Enabled: {config.pipeline.enable_images_generations}")
         logger.info(f"Image Edits Enabled: {config.pipeline.enable_images_edits}")
-        logger.info(f"Image Variations Enabled: {config.pipeline.enable_images_variations}")
+        logger.info(f"Image Variations Enabled: {config.pipeline.variations_config.enable_images_variations}")
         return pipe, config, data_path
     except Exception as e:
         logging.error("Error during setup: %s", e)
@@ -172,6 +178,8 @@ async def ensure_model_ready(request: Request, call_next):
 
 @fastfusion_app.post("/v1/images/generations")
 async def generate_images(request: Request, body: CreateImageRequest):
+    if not request.app.pipe_config.pipeline.enable_images_generations:
+        raise HTTPException(status_code=404, detail="Image generation not enabled")
     gen_pipe = AutoPipelineForText2Image.from_pipe(request.app.base_pipe)
     images_to_generate = min(body.n or 1, request.app.pipe_config.pipeline.max_n)
     prompt = body.prompt or 'A beautiful landscape'
@@ -200,13 +208,19 @@ async def edit_images(
     mask: UploadFile = File(None),
     n: int = Form(1),
     response_format: str = Form('url'),
-    model: Optional[str] = "flux.1-dev",
-    size: Optional[str] = "1024x1024",
-    user: Optional[str] = None,  # Ignored
-    guidance_scale: Optional[float] = 7.0,  # Addon over openAI
-    num_inference_steps: Optional[int] = 50  # Addon over openAI
+    model: Optional[str] = Form("flux.1-dev"),
+    size: Optional[str] = Form("1024x1024"),
+    user: Optional[str] = Form(None),  # Ignored
+    guidance_scale: Optional[float] = Form(None),  # Addon over openAI
+    num_inference_steps: Optional[int] = Form(None) # Addon over openAI
 ):
+    if not request.app.pipe_config.pipeline.enable_images_edits:
+        raise HTTPException(status_code=404, detail="Image edits")
     try:
+        if guidance_scale is None:
+            guidance_scale = request.app.pipe_config.pipeline.global_guidance_scale
+        if num_inference_steps is None:
+            num_inference_steps = request.app.pipe_config.pipeline.global_num_inference_steps
         edit_pipe = AutoPipelineForInpainting.from_pipe(request.app.base_pipe)
         images_to_generate = min(n, request.app.pipe_config.pipeline.max_n)
 
@@ -235,19 +249,100 @@ async def edit_images(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+async def get_image_description(image: Image.Image, request: Request) -> str:
+    """
+    Sends the image to OpenAI's GPT-4 model to get a description.
+    """
+    try:
+        openai_client = openai.Client(api_key=request.app.pipe_config.pipeline.vision_model_api_key, base_url=request.app.pipe_config.pipeline.vision_model_host)
+        # Convert the image to bytes
+        buffered = BytesIO()
+        image.save(buffered, format="PNG")
+        image_bytes = buffered.getvalue()
+
+        import base64
+        image_b64 = base64.b64encode(image_bytes).decode('utf-8')
+
+        # Include the base64 image in the prompt
+        # Alternatively, if you have access to GPT-4V, you can send the image directly.
+
+        # For GPT-4V (assuming you have access and the API supports image inputs)
+        response = openai_client.chat.completions.create(
+            model=request.app.pipe_config.variations_config.vision_model,
+            messages=[
+                {
+                    "role": "system", "content": "You are a helpful assistant to describe images."
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Guess the prompt that generated this image! One should be able to recreate it from the description",
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{image_b64}"
+                            },
+                        },
+                    ],
+                }
+            ],
+            temperature=0.2,
+            max_tokens=200
+        )
+
+        # Extract the description from the response
+        description = response.choices[0].message.content.strip()
+        openai_client.close()
+        return description
+
+    except Exception as e:
+        logging.error(f"Error getting image description: {e}")
+        # Return a default prompt if unable to get description
+        return 'Create variations of the image at your best guess!'
+
 
 @fastfusion_app.post("/v1/images/variations")
-async def generate_variations(request: Request, body: CreateImageVariationRequest):
-    var_pipe = AutoPipelineForImage2Image.from_pipe(request.app.base_pipe)
-    images_to_generate = min(body.n or 1, request.app.pipe_config.pipeline.max_n)
-    prompt = body.prompt or 'Generate variations'
-    init_image = convert_to_pil_image(body.image)
-    images = var_pipe(
-        prompt=prompt,
-        image=init_image,
-        num_images_per_prompt=images_to_generate
-    ).images
-    return encode_response(images, body.response_format or 'url', request)
+async def generate_variations(
+    request: Request,
+    image: UploadFile = File(...),
+    n: int = Form(1),
+    response_format: str = Form('url'),
+    model: str = Form(...),
+    size: Optional[str] = Form("1024x1024"),
+    user: Optional[str] = Form(None),  # Ignored
+    guidance_scale: Optional[float] = Form(None),  # Add-on over OpenAI
+    num_inference_steps: Optional[int] = Form(None)  # Add-on over OpenAI
+):
+    if not request.app.pipe_config.pipeline.variations_config.enable_images_variations:
+        raise HTTPException(status_code=404, detail="Image variations not enabled")
+    try:
+        if guidance_scale is None:
+            guidance_scale = request.app.pipe_config.pipeline.global_guidance_scale
+        if num_inference_steps is None:
+            num_inference_steps = request.app.pipe_config.pipeline.global_num_inference_steps
+        var_pipe = AutoPipelineForImage2Image.from_pipe(request.app.base_pipe)
+        images_to_generate = min(n, request.app.pipe_config.pipeline.max_n)
+        image_data = await image.read()
+        init_image = Image.open(BytesIO(image_data)).convert("RGB")
+        width, height = map(int, (size or '1024x1024').split('x'))
+        prompt = await get_image_description(init_image, request)
+
+        images = var_pipe(
+            prompt=prompt,
+            image=init_image,
+            num_images_per_prompt=images_to_generate,
+            guidance_scale=guidance_scale,
+            num_inference_steps=num_inference_steps,
+            width=width,
+            height=height
+        ).images
+        return encode_response(images, response_format, request)
+    except Exception as e:
+        logging.error(f"Error during image variation generation: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 
