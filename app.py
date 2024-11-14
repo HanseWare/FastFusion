@@ -212,12 +212,15 @@ async def edit_images(
     model: Optional[str] = Form("flux.1-dev"),
     size: Optional[str] = Form("1024x1024"),
     user: Optional[str] = Form(None),  # Ignored
+    strength: Optional[float] = Form(None),  # Addon over openAI
     guidance_scale: Optional[float] = Form(None),  # Addon over openAI
     num_inference_steps: Optional[int] = Form(None) # Addon over openAI
 ):
     if not request.app.pipe_config.pipeline.enable_images_edits:
         raise HTTPException(status_code=404, detail="Image edits")
     try:
+        if strength is None:
+            strength = 1.0
         if guidance_scale is None:
             guidance_scale = request.app.pipe_config.pipeline.global_guidance_scale
         if num_inference_steps is None:
@@ -240,6 +243,7 @@ async def edit_images(
             mask_image=mask_image,
             num_images_per_prompt=images_to_generate,
             guidance_scale=guidance_scale,
+            strength=strength,
             num_inference_steps=num_inference_steps,
             width=width,
             height=height
@@ -314,12 +318,15 @@ async def generate_variations(
     model: str = Form(...),
     size: Optional[str] = Form("1024x1024"),
     user: Optional[str] = Form(None),  # Ignored
+    strength: Optional[float] = Form(None),  # Add-on over OpenAI
     guidance_scale: Optional[float] = Form(None),  # Add-on over OpenAI
     num_inference_steps: Optional[int] = Form(None)  # Add-on over OpenAI
 ):
     if not request.app.pipe_config.pipeline.variations_config.enable_images_variations:
         raise HTTPException(status_code=404, detail="Image variations not enabled")
     try:
+        if strength is None:
+            strength = 1.0
         if guidance_scale is None:
             guidance_scale = request.app.pipe_config.pipeline.global_guidance_scale
         if num_inference_steps is None:
