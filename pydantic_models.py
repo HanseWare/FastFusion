@@ -44,6 +44,7 @@ class VariationsConfig(BaseModel):
     vision_model: str = "gpt-4o"
     vision_model_host: str = "https://api.openai.com"
     vision_model_api_key_variable: Optional[str] = ""
+    vision_model_api_key: Optional[str] = ""
 
 class PipelineConfig(BaseModel):
     hf_model_id: str

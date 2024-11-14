@@ -93,7 +93,8 @@ def setup(device):
         if (not config.pipeline.variations_config.vision_model_host) or (not config.pipeline.variations_config.vision_model):
             config.pipeline.variations_config.enable_images_variations = False
         elif config.pipeline.variations_config.enable_images_variations:
-            config.pipeline.variations_config.vision_model_api_key = os.getenv(config.pipeline.variations_config.vision_model_api_key_variable, "ignored")
+            if config.pipeline.variations_config.vision_model_api_key == "":
+                config.pipeline.variations_config.vision_model_api_key = os.getenv(config.pipeline.variations_config.vision_model_api_key_variable, "ignored")
 
         # Load the model pipeline using AutoPipelineForText2Image
         init_dtype = get_torch_dtype(config.pipeline.torch_dtype_init)
