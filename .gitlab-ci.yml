@@ -17,8 +17,9 @@ build-FastFusion-Base:
         - requirements.txt
   script:
     - docker login -u $DOCKERHUB_USERNAME -p $DOCKERHUB_PASS
-    - docker build -t cyb4black/fastfusion-base:latest -f Dockerfile.Base .
-    - docker push cyb4black/fastfusion-base:latest
+    - docker build -t hanseware/fastfusion-base:latest t hanseware/fastfusion-base:1.0.0 -f Dockerfile.Base .
+    - docker push hanseware/fastfusion-base:latest
+    - docker push hanseware/fastfusion-base:1.0.0
 
 build-FastFusion:
   stage: build
@@ -27,5 +28,6 @@ build-FastFusion:
     - if: $CI_COMMIT_REF_SLUG == "main"
   script:
     - docker login -u $DOCKERHUB_USERNAME -p $DOCKERHUB_PASS
-    - docker build -t cyb4black/fastfusion:latest -f Dockerfile .
-    - docker push cyb4black/fastfusion:latest
+    - docker build -t hanseware/fastfusion:latest t hanseware/fastfusion:1.0.0 -f Dockerfile .
+    - docker push hanseware/fastfusion:latest
+    - docker push hanseware/fastfusion:1.0.0
