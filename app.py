@@ -16,8 +16,30 @@ import json
 from fastapi import FastAPI, HTTPException, Request, Response, Form, UploadFile, File
 from PIL import Image
 import openai
+from pythonjsonlogger.json import JsonFormatter
 
 from pydantic_models import *
+__name__ = "hanseware.fastfusion"
+
+RESERVED_ATTRS: List[str] = [
+    "args",
+    "created",
+    "exc_info",
+    "exc_text",
+    "filename",
+    "levelno",
+    "lineno",
+    "module",
+    "msecs",
+    "message",
+    "msg",
+    "process",
+    "processName",
+    "relativeCreated",
+    "stack_info",
+    "thread",
+    "threadName",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +175,25 @@ def setup(device):
         import traceback
         traceback.print_exc()
         raise e
+
+
+def setup_logging():
+    loglevel = os.getenv("FASTFUSION_LOGLEVEL", "INFO").upper()
+    if loglevel == "DEBUG":
+        from transformers import logging as transformers_logging
+        from diffusers.utils import logging as diffusers_logging
+        transformers_logging.set_verbosity_debug()
+        diffusers_logging.set_verbosity_debug()
+    logger.info("Setting log level from env to", loglevel)
+    logging.basicConfig(level=logging.getLevelName(loglevel))
+    logHandler = logging.StreamHandler()
+    formatter = JsonFormatter(timestamp=True, reserved_attrs=RESERVED_ATTRS, datefmt='%Y-%m-%d %H:%M:%S')
+    logHandler.setFormatter(formatter)
+    logging.getLogger().handlers.clear()
+    logging.getLogger().addHandler(logHandler)
+    uvi_logger = logging.getLogger("uvicorn.access")
+    uvi_logger.handlers.clear()
+    uvi_logger.addHandler(logHandler)
 
 
 # Run above setup() function in seperate thread on FastAPI app startup

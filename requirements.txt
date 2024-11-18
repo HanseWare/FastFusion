@@ -14,3 +14,4 @@ sentencepiece~=0.2.0
 python-multipart~=0.0.12
 openai~=1.54.4
 uvicorn
+https://github.com/nhairs/python-json-logger/releases/download/v3.1.0/python_json_logger-3.1.0-py3-none-any.whl#egg=python-json-logger
