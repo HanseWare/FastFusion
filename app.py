@@ -200,6 +200,7 @@ def setup_logging():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Load the ML model
+    setup_logging()
     pipe, config, data_path = setup("cuda")
     app.base_pipe = pipe
     app.pipe_config = config
