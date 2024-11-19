@@ -1,5 +1,5 @@
 # ~~Lit~~FastFusion
-openAI API compatible hosting for Huggingface Diffusers supported models
+openAI API compatible hosting for Huggingface Diffusers Autopipeline supported models
 uses FastAPI and Huggingface Diffuser library
 
 Direct successor to LitFusion that was given up due to LitServe turning out to be utter garbage.
@@ -8,7 +8,7 @@ Ment to be deployed e.g. on a Kubernetes cluster.
 
 ## Features
 - [x] openAI API compatible
-- [x] all Huggingface Diffusers supported models
+- [x] all models supported via Huggingface Diffusers Autopipeline
 
 ## Usage
 ```bash
