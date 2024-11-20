@@ -1,5 +1,5 @@
 ![GitHub Tag](https://img.shields.io/github/v/tag/HanseWare/FastFusion?&label=Latest)
-[![Static Badge](https://img.shields.io/badge/dockerhub-images-important.svg?&logo=Docker)](https://hub.docker.com/hanseware/fastfusion)
+[![Static Badge](https://img.shields.io/badge/dockerhub-images-important.svg?&logo=Docker)](https://hub.docker.com/repository/docker/hanseware/fastfusion)
 
 # ~~Lit~~FastFusion
 openAI API compatible hosting for Huggingface Diffusers Autopipeline supported models
