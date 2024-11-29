@@ -5,6 +5,7 @@
     "max_n": 2,
     "torch_dtype_init": "bfloat16",
     "torch_dtype_run": "float16",
+    "torch_device": "cuda",
     "enable_cpu_offload": false,
     "enable_vae_slicing": true,
     "enable_vae_tiling": true,
@@ -13,6 +14,7 @@
     "enable_images_generations": true,
     "enable_images_edits": true,
     "variations_config": {
+      "use_flux_redux": false,
       "enable_images_variations": true,
       "vision_model": "gpt-4o",
       "vision_model_host": "https://api.openai.com",

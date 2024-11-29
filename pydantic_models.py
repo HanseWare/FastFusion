@@ -41,6 +41,7 @@ class CreateImageVariationRequest(BaseModel):
 
 class VariationsConfig(BaseModel):
     enable_images_variations: bool
+    use_flux_redux: bool = False
     vision_model: str = "gpt-4o"
     vision_model_host: str = "https://api.openai.com"
     vision_model_api_key_variable: Optional[str] = ""
@@ -51,6 +52,7 @@ class PipelineConfig(BaseModel):
     max_n: int
     torch_dtype_init: str
     torch_dtype_run: str
+    torch_device: str = "cuda"
     enable_cpu_offload: bool
     global_guidance_scale: float
     global_num_inference_steps: int

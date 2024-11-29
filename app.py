@@ -6,7 +6,8 @@ import threading
 from typing import Dict, List
 
 import torch
-from diffusers import AutoPipelineForText2Image, AutoPipelineForImage2Image, AutoPipelineForInpainting, ConfigMixin
+from diffusers import AutoPipelineForText2Image, AutoPipelineForImage2Image, AutoPipelineForInpainting, ConfigMixin, \
+    FluxPipeline
 import base64
 from io import BytesIO
 import logging
@@ -94,14 +95,13 @@ def clean_old_images(data_path: str):
         time.sleep(60)
 
 
-def setup(device):
+def setup():
     # Set up data path
     data_path = os.getenv("IMAGE_DATA_PATH", "/data")
     os.makedirs(data_path, exist_ok=True)
     # Launch cleanup thread
     cleanup_thread = threading.Thread(target=clean_old_images, args=(data_path,), daemon=True)
     cleanup_thread.start()
-    logger.info(f"Setting up model with device '{device}'...")
     try:
         # Load configuration JSON
         config_path = os.getenv("CONFIG_PATH", "model_config.json")
@@ -112,33 +112,43 @@ def setup(device):
         else:
             raise ValueError("Configuration file not found")
 
-        if (not config.pipeline.variations_config.vision_model_host) or (not config.pipeline.variations_config.vision_model):
+        # Set up the model pipeline
+        device = config.pipeline.torch_device
+        logger.info(f"Setting up model with device '{device}'...")
+
+        if (not config.pipeline.variations_config.use_flux_redux) or (not config.pipeline.variations_config.vision_model_host) or (not config.pipeline.variations_config.vision_model):
             config.pipeline.variations_config.enable_images_variations = False
         elif config.pipeline.variations_config.enable_images_variations:
             if config.pipeline.variations_config.vision_model_api_key == "":
                 config.pipeline.variations_config.vision_model_api_key = os.getenv(config.pipeline.variations_config.vision_model_api_key_variable, "ignored")
 
-        # Load the model pipeline using AutoPipelineForText2Image
+
         init_dtype = get_torch_dtype(config.pipeline.torch_dtype_init)
         logger.info(f"Loading model pipeline with init dtype {init_dtype}...")
-        if config.pipeline.enable_images_generations:
-            logger.info("Start loading base pipeline as image generation")
-            pipe = AutoPipelineForText2Image.from_pretrained(config.pipeline.hf_model_id,
-                                                                  torch_dtype=init_dtype)
-            logger.info("Finished loading base pipeline as image generation")
-        elif config.pipeline.enable_images_edits:
-            logger.info("Start loading base pipeline as image edit")
-            pipe = AutoPipelineForInpainting.from_pretrained(config.pipeline.hf_model_id,
-                                                                  torch_dtype=init_dtype)
-            logger.info("Finished loading base pipeline as image edit")
-        elif config.pipeline.variations_config.enable_images_variations:
-            logger.info("Start loading base pipeline as image variation")
-            pipe = AutoPipelineForImage2Image.from_pretrained(config.pipeline.hf_model_id,
-                                                                   torch_dtype=init_dtype)
-            logger.info("Finished loading base pipeline as image variation")
+        repo_redux = "black-forest-labs/FLUX.1-Redux-dev"
+        if config.pipeline.variations_config.use_flux_redux:
+            pipe = FluxPipeline.from_pretrained(config.pipeline.hf_model_id, torch_dtype=init_dtype)
+            redux_pipe = FluxPriorReduxPipeline.from_pretrained(repo_redux, torch_dtype=init_dtype).to(device)
         else:
-            raise ValueError(
-                "No pipeline enabled. Please enable at least one of the following: images generation, image edits, image variations")
+            # Load the model pipeline using AutoPipelineForText2Image
+            if config.pipeline.enable_images_generations:
+                logger.info("Start loading base pipeline as image generation")
+                pipe = AutoPipelineForText2Image.from_pretrained(config.pipeline.hf_model_id,
+                                                                 torch_dtype=init_dtype)
+                logger.info("Finished loading base pipeline as image generation")
+            elif config.pipeline.enable_images_edits:
+                logger.info("Start loading base pipeline as image edit")
+                pipe = AutoPipelineForInpainting.from_pretrained(config.pipeline.hf_model_id,
+                                                                 torch_dtype=init_dtype)
+                logger.info("Finished loading base pipeline as image edit")
+            elif config.pipeline.variations_config.enable_images_variations:
+                logger.info("Start loading base pipeline as image variation")
+                pipe = AutoPipelineForImage2Image.from_pretrained(config.pipeline.hf_model_id,
+                                                                  torch_dtype=init_dtype)
+                logger.info("Finished loading base pipeline as image variation")
+            else:
+                raise ValueError(
+                    "No pipeline enabled. Please enable at least one of the following: images generation, image edits, image variations")
 
         # Apply settings before moving to GPU if necessary
         if config.pipeline.enable_cpu_offload:
@@ -149,9 +159,9 @@ def setup(device):
         logger.info("Moving pipeline to runtime dtype")
         logger.info(f"Pipeline runtime dtype: {config.pipeline.torch_dtype_run}")
         pipe.to(get_torch_dtype(config.pipeline.torch_dtype_run))
-        logger.info("Move to GPU")
-        pipe.to("cuda")
-        logger.info("Finished moving pipeline to GPU")
+        logger.info(f"Move to {device}")
+        pipe.to(device)
+        logger.info(f"Finished moving pipeline to {device}")
         # Apply settings that have to be applied after moving to GPU
         if config.pipeline.enable_vae_slicing:
             pipe.vae.enable_slicing()
@@ -169,7 +179,7 @@ def setup(device):
         logger.info(f"Images Generation Enabled: {config.pipeline.enable_images_generations}")
         logger.info(f"Image Edits Enabled: {config.pipeline.enable_images_edits}")
         logger.info(f"Image Variations Enabled: {config.pipeline.variations_config.enable_images_variations}")
-        return pipe, config, data_path
+        return pipe, config, data_path, redux_pipe
     except Exception as e:
         logging.error("Error during setup: %s", e)
         import traceback
@@ -201,10 +211,11 @@ def setup_logging():
 async def lifespan(app: FastAPI):
     # Load the ML model
     setup_logging()
-    pipe, config, data_path = setup("cuda")
+    pipe, config, data_path, redux_pipe = setup()
     app.base_pipe = pipe
     app.pipe_config = config
     app.data_path = data_path
+    app.redux_pipe = redux_pipe
     yield
     # Clean up the ML models and release the resources
     app.base_pipe = None
@@ -298,7 +309,7 @@ async def edit_images(
 
 async def get_image_description(image: Image.Image, request: Request) -> str:
     """
-    Sends the image to OpenAI's GPT-4 model to get a description.
+    Sends the image to Vision model to get a description.
     """
     try:
         openai_client = openai.Client(api_key=request.app.pipe_config.pipeline.vision_model_api_key, base_url=request.app.pipe_config.pipeline.vision_model_host)
@@ -360,6 +371,7 @@ async def generate_variations(
     model: str = Form(...),
     size: Optional[str] = Form("1024x1024"),
     user: Optional[str] = Form(None),  # Ignored
+    prompt: Optional[str] = Form(None),
     strength: Optional[float] = Form(None),  # Add-on over OpenAI
     guidance_scale: Optional[float] = Form(None),  # Add-on over OpenAI
     num_inference_steps: Optional[int] = Form(None)  # Add-on over OpenAI
@@ -373,22 +385,32 @@ async def generate_variations(
             guidance_scale = request.app.pipe_config.pipeline.global_guidance_scale
         if num_inference_steps is None:
             num_inference_steps = request.app.pipe_config.pipeline.global_num_inference_steps
-        var_pipe = AutoPipelineForImage2Image.from_pipe(request.app.base_pipe)
         images_to_generate = min(n, request.app.pipe_config.pipeline.max_n)
         image_data = await image.read()
         init_image = Image.open(BytesIO(image_data)).convert("RGB")
         width, height = map(int, (size or '1024x1024').split('x'))
-        prompt = await get_image_description(init_image, request)
-
-        images = var_pipe(
-            prompt=prompt,
-            image=init_image,
-            num_images_per_prompt=images_to_generate,
-            guidance_scale=guidance_scale,
-            num_inference_steps=num_inference_steps,
-            width=width,
-            height=height
-        ).images
+        images = []
+        if request.app.redux_pipe:
+            var_pipe = request.app.base_pipe
+            images = var_pipe(
+                prompt=prompt,
+                num_images_per_prompt=images_to_generate,
+                guidance_scale=guidance_scale,
+                num_inference_steps=num_inference_steps,
+                **request.app.redux_pipe(image)
+            ).images
+        else:
+            var_pipe = AutoPipelineForImage2Image.from_pipe(request.app.base_pipe)
+            prompt = await get_image_description(init_image, request)
+            images = var_pipe(
+                prompt=prompt,
+                image=init_image,
+                num_images_per_prompt=images_to_generate,
+                guidance_scale=guidance_scale,
+                num_inference_steps=num_inference_steps,
+                width=width,
+                height=height
+            ).images
         return encode_response(images, response_format, request)
     except Exception as e:
         logging.error(f"Error during image variation generation: {e}")
