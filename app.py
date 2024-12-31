@@ -51,6 +51,9 @@ logger = logging.getLogger(__name__)
 class FastFusionApp(FastAPI):
     pipe_config: FastFusionConfig | None
     base_pipe: ConfigMixin | None
+    generations_pipe_class: ConfigMixin | None
+    edits_pipe_class: ConfigMixin | None
+    variations_pipe_class: ConfigMixin | None
     data_path: str
     base_url: str
     redux_pipe: ConfigMixin | None
@@ -252,6 +255,9 @@ async def lifespan(app: FastAPI):
     pipe, config, data_path, redux_pipe, depth_processor = setup()
     app.base_pipe = pipe
     app.pipe_config = config
+    app.generations_pipe_class = getattr(diffusers, config.pipeline.generations_config.pipeline)
+    app.edits_pipe_class = getattr(diffusers, config.pipeline.edits_config.pipeline)
+    app.variations_pipe_class = getattr(diffusers, config.pipeline.variations_config.pipeline)
     app.data_path = data_path
     app.redux_pipe = redux_pipe
     app.depth_processor = depth_processor
@@ -273,7 +279,14 @@ async def ensure_model_ready(request: Request, call_next):
 async def generate_images(request: Request, body: CreateImageRequest):
     if not request.app.pipe_config.pipeline.enable_images_generations:
         raise HTTPException(status_code=404, detail="Image generation not enabled")
-    gen_pipe = AutoPipelineForText2Image.from_pipe(request.app.base_pipe)
+    gen_pipe = request.app.generations_pipe_class.from_pipe(request.app.base_pipe)
+    if body.lora_settings:
+        adapter_names = []
+        adapter_weights = []
+        for lora_setting in body.lora_settings:
+            adapter_names.append(lora_setting.adapter_name)
+            adapter_weights.append(lora_setting.weight)
+        gen_pipe.load_lora_weights(adapter_names, adapter_weights=adapter_weights)
     images_to_generate = min(body.n or 1, request.app.pipe_config.pipeline.max_n)
     prompt = body.prompt or 'A beautiful landscape'
     width, height = map(int, (body.size or '1024x1024').split('x'))
@@ -290,6 +303,7 @@ async def generate_images(request: Request, body: CreateImageRequest):
         num_inference_steps=num_inference_steps,
         num_images_per_prompt=images_to_generate
     ).images
+    gen_pipe.disable_lora() # Disable LoRA after generation
     return encode_response(images, body.response_format or 'url', request)
 
 

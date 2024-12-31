@@ -16,4 +16,5 @@ openai~=1.54.4
 uvicorn~=0.32.0
 https://github.com/nhairs/python-json-logger/releases/download/v3.1.0/python_json_logger-3.1.0-py3-none-any.whl#egg=python-json-logger
 git+https://github.com/huggingface/image_gen_aux#egg=image_gen_aux
+controlnet-aux~=0.0.9
 requests~=2.32.3

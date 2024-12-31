@@ -3,6 +3,10 @@ from typing import Optional
 from pydantic import BaseModel
 
 
+class LoRASetting(BaseModel):
+    name: str
+    weight: Optional[float] = 1.0
+
 class CreateImageRequest(BaseModel):
     prompt: str
     model: Optional[str] = "flux.1-dev"
@@ -12,6 +16,7 @@ class CreateImageRequest(BaseModel):
     size: Optional[str] = "1024x1024"
     style: Optional[str] = "vivid"
     user: Optional[str] = None  # Ignored
+    lora_settings: Optional[list[LoRASetting]] = None
 
 
 class CreateImageEditRequest(BaseModel):
