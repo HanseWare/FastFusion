@@ -3,11 +3,15 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 import threading
+from pathlib import Path
 from typing import Dict, List
 
+import requests
 import torch
-from diffusers import AutoPipelineForText2Image, AutoPipelineForImage2Image, AutoPipelineForInpainting, ConfigMixin, \
-    FluxPipeline
+import diffusers
+from diffusers import *
+from image_gen_aux import DepthPreprocessor
+from controlnet_aux import CannyDetector
 import base64
 from io import BytesIO
 import logging
@@ -49,6 +53,8 @@ class FastFusionApp(FastAPI):
     base_pipe: ConfigMixin | None
     data_path: str
     base_url: str
+    redux_pipe: ConfigMixin | None
+    depth_processor: ConfigMixin | None
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.pipe_config = None
@@ -126,29 +132,61 @@ def setup():
         init_dtype = get_torch_dtype(config.pipeline.torch_dtype_init)
         logger.info(f"Loading model pipeline with init dtype {init_dtype}...")
         repo_redux = "black-forest-labs/FLUX.1-Redux-dev"
-        if config.pipeline.variations_config.use_flux_redux:
+        redux_pipe = None
+        if config.pipeline.variations_config.enable_flux_redux:
             pipe = FluxPipeline.from_pretrained(config.pipeline.hf_model_id, torch_dtype=init_dtype)
             redux_pipe = FluxPriorReduxPipeline.from_pretrained(repo_redux, torch_dtype=init_dtype).to(device)
         else:
-            # Load the model pipeline using AutoPipelineForText2Image
-            if config.pipeline.enable_images_generations:
+            if config.pipeline.generations_config.enabled:
                 logger.info("Start loading base pipeline as image generation")
-                pipe = AutoPipelineForText2Image.from_pretrained(config.pipeline.hf_model_id,
+                pipeline_class = getattr(diffusers, config.pipeline.generations_config.pipeline)
+                pipe = pipeline_class.from_pretrained(config.pipeline.hf_model_id,
                                                                  torch_dtype=init_dtype)
-                logger.info("Finished loading base pipeline as image generation")
-            elif config.pipeline.enable_images_edits:
+                logger.info("Finished loading base pipeline as image generation with class: %s", pipeline_class)
+            elif config.pipeline.edits_config.enabled:
                 logger.info("Start loading base pipeline as image edit")
-                pipe = AutoPipelineForInpainting.from_pretrained(config.pipeline.hf_model_id,
+                pipeline_class = getattr(diffusers, config.pipeline.edits_config.pipeline)
+                pipe = pipeline_class.from_pretrained(config.pipeline.hf_model_id,
                                                                  torch_dtype=init_dtype)
-                logger.info("Finished loading base pipeline as image edit")
-            elif config.pipeline.variations_config.enable_images_variations:
+                logger.info("Finished loading base pipeline as image edit with class: %s", pipeline_class)
+            elif config.pipeline.variations_config.enabled:
                 logger.info("Start loading base pipeline as image variation")
-                pipe = AutoPipelineForImage2Image.from_pretrained(config.pipeline.hf_model_id,
+                pipeline_class = getattr(diffusers, config.pipeline.variations_config.pipeline)
+                pipe = pipeline_class.from_pretrained(config.pipeline.hf_model_id,
                                                                   torch_dtype=init_dtype)
                 logger.info("Finished loading base pipeline as image variation")
             else:
                 raise ValueError(
                     "No pipeline enabled. Please enable at least one of the following: images generation, image edits, image variations")
+
+        depth_processor = None
+        if config.pipeline.variations_config.enable_flux_depth:
+            depth_processor = DepthPreprocessor.from_pretrained("LiheYoung/depth-anything-large-hf")
+        # Load LoRA weights if available
+        if config.pipeline.loras:
+            # download weights for remote models
+            for i, lora_config in enumerate(config.pipeline.loras):  # Use enumerate to get the index
+                if lora_config.type == "url":
+                    # Download the weights
+                    response = requests.get(lora_config.address)
+                    response.raise_for_status()  # Raise an exception for HTTP errors
+
+                    # Save the weights locally
+                    weights_path = Path("weights") / f"{lora_config.weight_name}.safetensors"
+                    weights_path.parent.mkdir(parents=True, exist_ok=True)
+                    with open(weights_path, 'wb') as f:
+                        f.write(response.content)
+                    logger.info(f"Downloaded LoRA weights to {weights_path}")
+
+                    # Update the address in the configuration
+                    config.pipeline.loras[i].address = str(weights_path)
+
+            for lora_config in config.pipeline.loras:
+                pipe.load_lora_weights(lora_config.address, adapter_name=lora_config.adapter_name)
+                logger.info(f"Loaded LoRA weights from {lora_config.address}")
+
+            pipe.disable_lora()
+
 
         # Apply settings before moving to GPU if necessary
         if config.pipeline.enable_cpu_offload:
@@ -179,7 +217,7 @@ def setup():
         logger.info(f"Images Generation Enabled: {config.pipeline.enable_images_generations}")
         logger.info(f"Image Edits Enabled: {config.pipeline.enable_images_edits}")
         logger.info(f"Image Variations Enabled: {config.pipeline.variations_config.enable_images_variations}")
-        return pipe, config, data_path, redux_pipe
+        return pipe, config, data_path, redux_pipe, depth_processor
     except Exception as e:
         logging.error("Error during setup: %s", e)
         import traceback
@@ -211,11 +249,12 @@ def setup_logging():
 async def lifespan(app: FastAPI):
     # Load the ML model
     setup_logging()
-    pipe, config, data_path, redux_pipe = setup()
+    pipe, config, data_path, redux_pipe, depth_processor = setup()
     app.base_pipe = pipe
     app.pipe_config = config
     app.data_path = data_path
     app.redux_pipe = redux_pipe
+    app.depth_processor = depth_processor
     yield
     # Clean up the ML models and release the resources
     app.base_pipe = None

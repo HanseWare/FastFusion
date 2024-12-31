@@ -1,5 +1,5 @@
 accelerate~=1.1.0
-diffusers~=0.31.0
+diffusers~=0.32.1
 pillow~=10.3.0
 tokenizers~=0.20.2
 transformers~=4.46.1
@@ -7,11 +7,13 @@ protobuf~=5.28.3
 huggingface-hub~=0.26.2
 fastapi~=0.115.4
 pydantic~=2.6.4
-torch~=2.2.1
+torch~=2.5.1
 numpy~=1.26.4
 sentence-transformers~=2.7.0
 sentencepiece~=0.2.0
 python-multipart~=0.0.12
 openai~=1.54.4
-uvicorn
+uvicorn~=0.32.0
 https://github.com/nhairs/python-json-logger/releases/download/v3.1.0/python_json_logger-3.1.0-py3-none-any.whl#egg=python-json-logger
+git+https://github.com/huggingface/image_gen_aux#egg=image_gen_aux
+requests~=2.32.3

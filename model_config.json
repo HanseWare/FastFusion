@@ -11,15 +11,37 @@
     "enable_vae_tiling": true,
     "global_guidance_scale": 7.0,
     "global_num_inference_steps": 50,
-    "enable_images_generations": true,
-    "enable_images_edits": true,
+    "generations_config": {
+      "enabled": true,
+      "pipeline": "FluxPipeline"
+    },
+    "edits_config": {
+      "enabled": true,
+      "pipeline": "FluxFillPipeline"
+    },
     "variations_config": {
-      "use_flux_redux": false,
-      "enable_images_variations": true,
+      "enable_flux_redux": false,
+      "enable_flux_canny": false,
+      "enable_flux_depth": false,
+      "enabled": true,
       "vision_model": "gpt-4o",
       "vision_model_host": "https://api.openai.com",
       "vision_model_api_key_variable": "OPENAI_API_KEY"
-    }
+    },
+    "loras": [
+      {
+        "type": "hub",
+        "address": "black-forest-labs/FLUX.1-Canny-dev-lora",
+        "weight_name": null,
+        "adapter_name": "flux-canny"
+      },
+      {
+        "type": "hub",
+        "address": "black-forest-labs/FLUX.1-Depth-dev-lora",
+        "weight_name": null,
+        "adapter_name": "flux-depth"
+      }
+    ]
   },
   "generation_presets": {
     "standard": {

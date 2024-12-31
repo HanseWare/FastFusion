@@ -39,13 +39,30 @@ class CreateImageVariationRequest(BaseModel):
     strength: Optional[float] = 0.75  # Addon over openAI
     guidance_scale: Optional[float] = 0.0  # Addon over openAI
 
+class GenerationsConfig(BaseModel):
+    enabled: bool = False
+    pipeline: Optional[str] = "AutoPipelineForText2Image"
+
+class EditsConfig(BaseModel):
+    enabled: bool = False
+    pipeline: Optional[str] = "AutoPipelineForInpainting"
+
 class VariationsConfig(BaseModel):
-    enable_images_variations: bool
-    use_flux_redux: bool = False
+    enabled: bool = False
+    pipeline: Optional[str] = "AutoPipelineForImage2Image"
+    enable_flux_redux: bool = False
+    enable_flux_canny: bool = False
+    enable_flux_depth: bool = False
     vision_model: str = "gpt-4o"
     vision_model_host: str = "https://api.openai.com"
     vision_model_api_key_variable: Optional[str] = ""
     vision_model_api_key: Optional[str] = ""
+
+class LoRAConfig(BaseModel):
+    type: str # one of hub, local, or url
+    address: str # address of the LoRA model, either a hub model name, a local path, or a URL
+    weight_name: Optional[str] = None # name of the weight file to load
+    adapter_name: str # name the adapter should have in the model
 
 class PipelineConfig(BaseModel):
     hf_model_id: str
@@ -56,11 +73,12 @@ class PipelineConfig(BaseModel):
     enable_cpu_offload: bool
     global_guidance_scale: float
     global_num_inference_steps: int
-    enable_images_generations: bool
-    enable_images_edits: bool
+    generations_config: GenerationsConfig
+    edits_config: EditsConfig
     variations_config: VariationsConfig
     enable_vae_slicing: bool
     enable_vae_tiling: bool
+    loras: Optional[list[LoRAConfig]] = None
 
 
 class GenerationPreset(BaseModel):
