@@ -125,9 +125,9 @@ def setup():
         device = config.pipeline.torch_device
         logger.info(f"Setting up model with device '{device}'...")
 
-        if (not config.pipeline.variations_config.use_flux_redux) or (not config.pipeline.variations_config.vision_model_host) or (not config.pipeline.variations_config.vision_model):
-            config.pipeline.variations_config.enable_images_variations = False
-        elif config.pipeline.variations_config.enable_images_variations:
+        if (not config.pipeline.variations_config.enable_flux_redux) or (not config.pipeline.variations_config.vision_model_host) or (not config.pipeline.variations_config.vision_model):
+            config.pipeline.variations_config.enabled = False
+        elif config.pipeline.variations_config.enabled:
             if config.pipeline.variations_config.vision_model_api_key == "":
                 config.pipeline.variations_config.vision_model_api_key = os.getenv(config.pipeline.variations_config.vision_model_api_key_variable, "ignored")
 
@@ -174,6 +174,8 @@ def setup():
                     response = requests.get(lora_config.address)
                     response.raise_for_status()  # Raise an exception for HTTP errors
 
+                    if not lora_config.weight_name:
+                        lora_config.weight_name = lora_config.adapter_name
                     # Save the weights locally
                     weights_path = Path("weights") / f"{lora_config.weight_name}.safetensors"
                     weights_path.parent.mkdir(parents=True, exist_ok=True)
@@ -217,9 +219,9 @@ def setup():
         logger.info(f"CPU Offload Enabled: {config.pipeline.enable_cpu_offload}")
         logger.info(f"VAE Slicing Enabled: {config.pipeline.enable_vae_slicing}")
         logger.info(f"VAE Tiling Enabled: {config.pipeline.enable_vae_tiling}")
-        logger.info(f"Images Generation Enabled: {config.pipeline.enable_images_generations}")
-        logger.info(f"Image Edits Enabled: {config.pipeline.enable_images_edits}")
-        logger.info(f"Image Variations Enabled: {config.pipeline.variations_config.enable_images_variations}")
+        logger.info(f"Images Generation Enabled: {config.pipeline.generations_config.enabled}")
+        logger.info(f"Image Edits Enabled: {config.pipeline.edits_config.enabled}")
+        logger.info(f"Image Variations Enabled: {config.pipeline.variations_config.enabled}")
         return pipe, config, data_path, redux_pipe, depth_processor
     except Exception as e:
         logging.error("Error during setup: %s", e)
@@ -277,7 +279,7 @@ async def ensure_model_ready(request: Request, call_next):
 
 @fastfusion_app.post("/v1/images/generations")
 async def generate_images(request: Request, body: CreateImageRequest):
-    if not request.app.pipe_config.pipeline.enable_images_generations:
+    if not request.app.pipe_config.pipeline.generations_config.enabled:
         raise HTTPException(status_code=404, detail="Image generation not enabled")
     gen_pipe = request.app.generations_pipe_class.from_pipe(request.app.base_pipe)
     if body.lora_settings:
@@ -322,7 +324,7 @@ async def edit_images(
     guidance_scale: Optional[float] = Form(None),  # Addon over openAI
     num_inference_steps: Optional[int] = Form(None) # Addon over openAI
 ):
-    if not request.app.pipe_config.pipeline.enable_images_edits:
+    if not request.app.pipe_config.pipeline.edits_config.enabled:
         raise HTTPException(status_code=404, detail="Image edits")
     try:
         if strength is None:
@@ -429,7 +431,7 @@ async def generate_variations(
     guidance_scale: Optional[float] = Form(None),  # Add-on over OpenAI
     num_inference_steps: Optional[int] = Form(None)  # Add-on over OpenAI
 ):
-    if not request.app.pipe_config.pipeline.variations_config.enable_images_variations:
+    if not request.app.pipe_config.pipeline.variations_config.enabled:
         raise HTTPException(status_code=404, detail="Image variations not enabled")
     try:
         if strength is None:
