@@ -1,8 +1,8 @@
 accelerate~=1.1.0
 diffusers~=0.32.1
 pillow~=10.3.0
-tokenizers~=0.21.0
-transformers~=4.47.1
+tokenizers~=0.20.2
+transformers~=4.46.1
 peft~=0.14.0
 protobuf~=5.28.3
 huggingface-hub~=0.26.2
