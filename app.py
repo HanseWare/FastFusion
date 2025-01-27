@@ -10,13 +10,15 @@ import requests
 import torch
 import diffusers
 from diffusers import *
-from image_gen_aux import DepthPreprocessor
-from controlnet_aux import CannyDetector
 import base64
 from io import BytesIO
 import logging
 import os
 import json
+
+import queue
+from threading import Thread
+import asyncio
 
 from fastapi import FastAPI, HTTPException, Request, Response, Form, UploadFile, File
 from PIL import Image
@@ -103,6 +105,32 @@ def clean_old_images(data_path: str):
                     logger.info(f"Deleted old image file: {filepath}")
         time.sleep(60)
 
+task_queue = queue.Queue()
+worker_thread = Thread(target=lambda: None)
+worker_active = False
+
+def worker():
+    global worker_active
+    while True:
+        try:
+            # Retrieve a task and execute it
+            task = task_queue.get(timeout=3)  # Timeout to check periodically if still active
+            task()
+        except queue.Empty:
+            # If no task, potentially stop the worker
+            if task_queue.empty():
+                worker_active = False
+                break
+        finally:
+            task_queue.task_done()
+
+def ensure_worker_running():
+    global worker_thread, worker_active
+    if not worker_active or not worker_thread.is_alive():
+        worker_active = True
+        worker_thread = Thread(target=worker, daemon=True)
+        worker_thread.start()
+
 
 def setup():
     # Set up data path
@@ -162,9 +190,6 @@ def setup():
                 raise ValueError(
                     "No pipeline enabled. Please enable at least one of the following: images generation, image edits, image variations")
 
-        depth_processor = None
-        if config.pipeline.variations_config.enable_flux_depth:
-            depth_processor = DepthPreprocessor.from_pretrained("LiheYoung/depth-anything-large-hf")
         # Load LoRA weights if available
         if config.pipeline.loras:
             # download weights for remote models
@@ -222,7 +247,7 @@ def setup():
         logger.info(f"Images Generation Enabled: {config.pipeline.generations_config.enabled}")
         logger.info(f"Image Edits Enabled: {config.pipeline.edits_config.enabled}")
         logger.info(f"Image Variations Enabled: {config.pipeline.variations_config.enabled}")
-        return pipe, config, data_path, redux_pipe, depth_processor
+        return pipe, config, data_path, redux_pipe
     except Exception as e:
         logging.error("Error during setup: %s", e)
         import traceback
@@ -254,7 +279,7 @@ def setup_logging():
 async def lifespan(app: FastAPI):
     # Load the ML model
     setup_logging()
-    pipe, config, data_path, redux_pipe, depth_processor = setup()
+    pipe, config, data_path, redux_pipe = setup()
     app.base_pipe = pipe
     app.pipe_config = config
     app.generations_pipe_class = getattr(diffusers, config.pipeline.generations_config.pipeline)
@@ -262,7 +287,6 @@ async def lifespan(app: FastAPI):
     app.variations_pipe_class = getattr(diffusers, config.pipeline.variations_config.pipeline)
     app.data_path = data_path
     app.redux_pipe = redux_pipe
-    app.depth_processor = depth_processor
     yield
     # Clean up the ML models and release the resources
     app.base_pipe = None
@@ -277,92 +301,146 @@ async def ensure_model_ready(request: Request, call_next):
     response = await call_next(request)
     return response
 
+
 @fastfusion_app.post("/v1/images/generations")
 async def generate_images(request: Request, body: CreateImageRequest):
-    if not request.app.pipe_config.pipeline.generations_config.enabled:
-        raise HTTPException(status_code=404, detail="Image generation not enabled")
-    gen_pipe = request.app.generations_pipe_class.from_pipe(request.app.base_pipe)
-    if body.lora_settings:
-        adapter_names = []
-        adapter_weights = []
-        for lora_setting in body.lora_settings:
-            adapter_names.append(lora_setting.adapter_name)
-            adapter_weights.append(lora_setting.weight)
-        gen_pipe.load_lora_weights(adapter_names, adapter_weights=adapter_weights)
-    images_to_generate = min(body.n or 1, request.app.pipe_config.pipeline.max_n)
-    prompt = body.prompt or 'A beautiful landscape'
-    width, height = map(int, (body.size or '1024x1024').split('x'))
-    quality = body.quality or 'standard'
-    preset = request.app.pipe_config.generation_presets.get(quality)
-    guidance_scale = preset.guidance_scale
-    num_inference_steps = preset.num_inference_steps
-    logger.info(f"Generating {images_to_generate} images with prompt '{prompt}'")
-    images = gen_pipe(
-        prompt=prompt,
-        width=width,
-        height=height,
-        guidance_scale=guidance_scale,
-        num_inference_steps=num_inference_steps,
-        num_images_per_prompt=images_to_generate
-    ).images
-    gen_pipe.disable_lora() # Disable LoRA after generation
-    return encode_response(images, body.response_format or 'url', request)
+    event = asyncio.Event()
+    result_container = {}
+
+    def task():
+        try:
+            if not request.app.pipe_config.pipeline.generations_config.enabled:
+                raise HTTPException(status_code=404, detail="Image generation not enabled")
+
+            # Initialize the generation pipeline from the base pipeline
+            gen_pipe = request.app.generations_pipe_class.from_pipe(request.app.base_pipe)
+
+            # Apply LoRA settings if provided
+            if body.lora_settings:
+                adapter_names = []
+                adapter_weights = []
+                for lora_setting in body.lora_settings:
+                    adapter_names.append(lora_setting.adapter_name)
+                    adapter_weights.append(lora_setting.weight)
+                gen_pipe.load_lora_weights(adapter_names, adapter_weights=adapter_weights)
+
+            # Generate images based on the provided prompt and settings
+            images_to_generate = min(body.n or 1, request.app.pipe_config.pipeline.max_n)
+            prompt = body.prompt or 'A beautiful landscape'
+            width, height = map(int, (body.size or '1024x1024').split('x'))
+            quality = body.quality or 'standard'
+            preset = request.app.pipe_config.generation_presets.get(quality)
+            guidance_scale = preset.guidance_scale
+            num_inference_steps = preset.num_inference_steps
+
+            images = gen_pipe(
+                prompt=prompt,
+                width=width,
+                height=height,
+                guidance_scale=guidance_scale,
+                num_inference_steps=num_inference_steps,
+                num_images_per_prompt=images_to_generate
+            ).images
+
+            gen_pipe.disable_lora()  # Disable LoRA after generation to reset the state
+
+            result_container['result'] = encode_response(images, body.response_format or 'url', request)
+
+        except Exception as e:
+            result_container['error'] = e
+        finally:
+            event.set()
+
+    # Enqueue the task and ensure the worker is running
+    task_queue.put(task)
+    ensure_worker_running()
+    await event.wait()
+
+    if 'error' in result_container:
+        raise HTTPException(status_code=500, detail=str(result_container['error']))
+
+    return result_container['result']
 
 
 @fastfusion_app.post("/v1/images/edits")
 async def edit_images(
-    request: Request,
-    prompt: str = Form(...),
-    image: UploadFile = File(...),
-    mask: UploadFile = File(None),
-    n: int = Form(1),
-    response_format: str = Form('url'),
-    model: Optional[str] = Form("flux.1-dev"),
-    size: Optional[str] = Form("1024x1024"),
-    user: Optional[str] = Form(None),  # Ignored
-    strength: Optional[float] = Form(None),  # Addon over openAI
-    guidance_scale: Optional[float] = Form(None),  # Addon over openAI
-    num_inference_steps: Optional[int] = Form(None) # Addon over openAI
+        request: Request,
+        prompt: str = Form(...),
+        image: UploadFile = File(...),
+        mask: UploadFile = File(None),
+        n: int = Form(1),
+        response_format: str = Form('url'),
+        model: Optional[str] = Form("flux.1-dev"),
+        size: Optional[str] = Form("1024x1024"),
+        user: Optional[str] = Form(None),  # Ignored
+        strength: Optional[float] = Form(None),  # Addon over openAI
+        guidance_scale: Optional[float] = Form(None),  # Addon over openAI
+        num_inference_steps: Optional[int] = Form(None),  # Addon over openAI
+        lora_settings: Optional[List[LoRASetting]] = None
+        # Include this if you're using Pydantic models to parse LoRA settings
 ):
-    if not request.app.pipe_config.pipeline.edits_config.enabled:
-        raise HTTPException(status_code=404, detail="Image edits")
-    try:
-        if strength is None:
-            strength = 1.0
-        if guidance_scale is None:
-            guidance_scale = request.app.pipe_config.pipeline.global_guidance_scale
-        if num_inference_steps is None:
-            num_inference_steps = request.app.pipe_config.pipeline.global_num_inference_steps
-        edit_pipe = AutoPipelineForInpainting.from_pipe(request.app.base_pipe)
-        images_to_generate = min(n, request.app.pipe_config.pipeline.max_n)
+    event = asyncio.Event()
+    result_container = {}
 
-        # Read the uploaded files
-        image_data = await image.read()
-        mask_data = await mask.read() if mask is not None else None
+    def task():
+        try:
+            if not request.app.pipe_config.pipeline.edits_config.enabled:
+                raise HTTPException(status_code=404, detail="Image edits")
 
-        # Convert bytes to PIL Images
-        init_image = Image.open(BytesIO(image_data)).convert("RGB")
-        mask_image = Image.open(BytesIO(mask_data)).convert("RGB") if mask_data else None
-        width, height = map(int, (size or '1024x1024').split('x'))
+            # Initialize the edit pipeline from the base pipeline
+            edit_pipe = AutoPipelineForInpainting.from_pipe(request.app.base_pipe)
 
-        images = edit_pipe(
-            prompt=prompt,
-            image=init_image,
-            mask_image=mask_image,
-            num_images_per_prompt=images_to_generate,
-            guidance_scale=guidance_scale,
-            strength=strength,
-            num_inference_steps=num_inference_steps,
-            width=width,
-            height=height
-        ).images
-        return encode_response(images, response_format, request)
-    except Exception as e:
-        logging.error(f"Error during image editing: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+            # Apply LoRA settings if provided
+            if lora_settings:
+                adapter_names = [setting.adapter_name for setting in lora_settings]
+                adapter_weights = [setting.weight for setting in lora_settings]
+                edit_pipe.load_lora_weights(adapter_names, adapter_weights=adapter_weights)
+
+            images_to_generate = min(n, request.app.pipe_config.pipeline.max_n)
+
+            # Synchronously read and convert the uploaded images
+            image_data = image.file.read()  # Use .file.read() in a synchronous context
+            mask_data = mask.file.read() if mask is not None else None
+
+            # Convert bytes to PIL Images
+            init_image = Image.open(BytesIO(image_data)).convert("RGB")
+            mask_image = Image.open(BytesIO(mask_data)).convert("RGB") if mask_data else None
+            width, height = map(int, (size or '1024x1024').split('x'))
+
+            images = edit_pipe(
+                prompt=prompt,
+                image=init_image,
+                mask_image=mask_image,
+                num_images_per_prompt=images_to_generate,
+                guidance_scale=guidance_scale,
+                strength=strength,
+                num_inference_steps=num_inference_steps,
+                width=width,
+                height=height
+            ).images
+
+            # Disable LoRA after editing to reset the model state
+            edit_pipe.disable_lora()
+
+            result_container['result'] = encode_response(images, response_format, request)
+
+        except Exception as e:
+            result_container['error'] = e
+        finally:
+            event.set()
+
+    # Enqueue the task and ensure the worker is running
+    task_queue.put(task)
+    ensure_worker_running()
+    await event.wait()
+
+    if 'error' in result_container:
+        raise HTTPException(status_code=500, detail=str(result_container['error']))
+
+    return result_container['result']
 
 
-async def get_image_description(image: Image.Image, request: Request) -> str:
+def get_image_description(image: Image.Image, request: Request) -> str:
     """
     Sends the image to Vision model to get a description.
     """
@@ -419,46 +497,42 @@ async def get_image_description(image: Image.Image, request: Request) -> str:
 
 @fastfusion_app.post("/v1/images/variations")
 async def generate_variations(
-    request: Request,
-    image: UploadFile = File(...),
-    n: int = Form(1),
-    response_format: str = Form('url'),
-    model: str = Form(...),
-    size: Optional[str] = Form("1024x1024"),
-    user: Optional[str] = Form(None),  # Ignored
-    prompt: Optional[str] = Form(None),
-    strength: Optional[float] = Form(None),  # Add-on over OpenAI
-    guidance_scale: Optional[float] = Form(None),  # Add-on over OpenAI
-    num_inference_steps: Optional[int] = Form(None)  # Add-on over OpenAI
+        request: Request,
+        image: UploadFile = File(...),
+        n: int = Form(1),
+        response_format: str = Form('url'),
+        model: str = Form(...),
+        size: Optional[str] = Form("1024x1024"),
+        user: Optional[str] = Form(None),  # Ignored
+        prompt: Optional[str] = Form(None),
+        strength: Optional[float] = Form(None),  # Add-on over OpenAI
+        guidance_scale: Optional[float] = Form(None),  # Add-on over OpenAI
+        num_inference_steps: Optional[int] = Form(None)  # Add-on over OpenAI
 ):
-    if not request.app.pipe_config.pipeline.variations_config.enabled:
-        raise HTTPException(status_code=404, detail="Image variations not enabled")
-    try:
-        if strength is None:
-            strength = 1.0
-        if guidance_scale is None:
-            guidance_scale = request.app.pipe_config.pipeline.global_guidance_scale
-        if num_inference_steps is None:
-            num_inference_steps = request.app.pipe_config.pipeline.global_num_inference_steps
-        images_to_generate = min(n, request.app.pipe_config.pipeline.max_n)
-        image_data = await image.read()
-        init_image = Image.open(BytesIO(image_data)).convert("RGB")
-        width, height = map(int, (size or '1024x1024').split('x'))
-        images = []
-        if request.app.redux_pipe:
-            var_pipe = request.app.base_pipe
+    event = asyncio.Event()
+    result_container = {}
+
+    def task():
+        try:
+            if not request.app.pipe_config.pipeline.variations_config.enabled:
+                raise HTTPException(status_code=404, detail="Image variations not enabled")
+
+            images_to_generate = min(n, request.app.pipe_config.pipeline.max_n)
+            image_data = image.file.read()  # Synchronous file read
+            init_image = Image.open(BytesIO(image_data)).convert("RGB")
+            width, height = map(int, (size or '1024x1024').split('x'))
+
+            # Conditional pipeline based on redux_pipe presence
+            image_description = None
+            if request.app.redux_pipe:
+                var_pipe = request.app.redux_pipe
+            else:
+                var_pipe = AutoPipelineForImage2Image.from_pipe(request.app.base_pipe)
+                # Synchronously get the image description
+                image_description = get_image_description(init_image, request) if prompt is None else prompt
+            var_prompt = prompt or image_description
             images = var_pipe(
-                prompt=prompt,
-                num_images_per_prompt=images_to_generate,
-                guidance_scale=guidance_scale,
-                num_inference_steps=num_inference_steps,
-                **request.app.redux_pipe(image)
-            ).images
-        else:
-            var_pipe = AutoPipelineForImage2Image.from_pipe(request.app.base_pipe)
-            prompt = await get_image_description(init_image, request)
-            images = var_pipe(
-                prompt=prompt,
+                prompt=var_prompt,
                 image=init_image,
                 num_images_per_prompt=images_to_generate,
                 guidance_scale=guidance_scale,
@@ -466,10 +540,23 @@ async def generate_variations(
                 width=width,
                 height=height
             ).images
-        return encode_response(images, response_format, request)
-    except Exception as e:
-        logging.error(f"Error during image variation generation: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+
+            result_container['result'] = encode_response(images, response_format, request)
+
+        except Exception as e:
+            result_container['error'] = e
+        finally:
+            event.set()
+
+    # Enqueue the task and ensure the worker is running
+    task_queue.put(task)
+    ensure_worker_running()
+    await event.wait()
+
+    if 'error' in result_container:
+        raise HTTPException(status_code=500, detail=str(result_container['error']))
+
+    return result_container['result']
 
 
 
