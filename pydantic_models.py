@@ -56,8 +56,6 @@ class VariationsConfig(BaseModel):
     enabled: bool = False
     pipeline: Optional[str] = "AutoPipelineForImage2Image"
     enable_flux_redux: bool = False
-    enable_flux_canny: bool = False
-    enable_flux_depth: bool = False
     vision_model: str = "gpt-4o"
     vision_model_host: str = "https://api.openai.com"
     vision_model_api_key_variable: Optional[str] = ""

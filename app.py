@@ -116,13 +116,13 @@ def worker():
             # Retrieve a task and execute it
             task = task_queue.get(timeout=3)  # Timeout to check periodically if still active
             task()
+            task_queue.task_done()
         except queue.Empty:
             # If no task, potentially stop the worker
             if task_queue.empty():
                 worker_active = False
                 break
-        finally:
-            task_queue.task_done()
+
 
 def ensure_worker_running():
     global worker_thread, worker_active
@@ -166,7 +166,7 @@ def setup():
         redux_pipe = None
         if config.pipeline.variations_config.enable_flux_redux:
             pipe = FluxPipeline.from_pretrained(config.pipeline.hf_model_id, torch_dtype=init_dtype)
-            redux_pipe = FluxPriorReduxPipeline.from_pretrained(repo_redux, torch_dtype=init_dtype).to(device)
+            redux_pipe = FluxPriorReduxPipeline.from_pretrained(repo_redux, torch_dtype=get_torch_dtype(config.pipeline.torch_dtype_run)).to(device)
         else:
             if config.pipeline.generations_config.enabled:
                 logger.info("Start loading base pipeline as image generation")
@@ -320,9 +320,9 @@ async def generate_images(request: Request, body: CreateImageRequest):
                 adapter_names = []
                 adapter_weights = []
                 for lora_setting in body.lora_settings:
-                    adapter_names.append(lora_setting.adapter_name)
+                    adapter_names.append(lora_setting.name)
                     adapter_weights.append(lora_setting.weight)
-                gen_pipe.load_lora_weights(adapter_names, adapter_weights=adapter_weights)
+                gen_pipe.set_adapters(adapter_names, adapter_weights)
 
             # Generate images based on the provided prompt and settings
             images_to_generate = min(body.n or 1, request.app.pipe_config.pipeline.max_n)
@@ -392,9 +392,12 @@ async def edit_images(
 
             # Apply LoRA settings if provided
             if lora_settings:
-                adapter_names = [setting.adapter_name for setting in lora_settings]
-                adapter_weights = [setting.weight for setting in lora_settings]
-                edit_pipe.load_lora_weights(adapter_names, adapter_weights=adapter_weights)
+                adapter_names = []
+                adapter_weights = []
+                for lora_setting in lora_settings:
+                    adapter_names.append(lora_setting.name)
+                    adapter_weights.append(lora_setting.weight)
+                edit_pipe.set_adapters(adapter_names, adapter_weights)
 
             images_to_generate = min(n, request.app.pipe_config.pipeline.max_n)
 
@@ -507,7 +510,8 @@ async def generate_variations(
         prompt: Optional[str] = Form(None),
         strength: Optional[float] = Form(None),  # Add-on over OpenAI
         guidance_scale: Optional[float] = Form(None),  # Add-on over OpenAI
-        num_inference_steps: Optional[int] = Form(None)  # Add-on over OpenAI
+        num_inference_steps: Optional[int] = Form(None),  # Add-on over OpenAI
+        lora_settings: Optional[List[LoRASetting]] = None  # New parameter for LoRA settings
 ):
     event = asyncio.Event()
     result_container = {}
@@ -517,38 +521,68 @@ async def generate_variations(
             if not request.app.pipe_config.pipeline.variations_config.enabled:
                 raise HTTPException(status_code=404, detail="Image variations not enabled")
 
+            local_strength = strength if strength is not None else 1.0
+            local_guidance = guidance_scale if guidance_scale is not None else request.app.pipe_config.pipeline.global_guidance_scale
+            local_steps = num_inference_steps if num_inference_steps is not None else request.app.pipe_config.pipeline.global_num_inference_steps
             images_to_generate = min(n, request.app.pipe_config.pipeline.max_n)
-            image_data = image.file.read()  # Synchronous file read
+
+            image_data = image.file.read()  # within the worker thread use synchronous I/O
             init_image = Image.open(BytesIO(image_data)).convert("RGB")
             width, height = map(int, (size or '1024x1024').split('x'))
 
-            # Conditional pipeline based on redux_pipe presence
-            image_description = None
             if request.app.redux_pipe:
-                var_pipe = request.app.redux_pipe
+                var_pipe = request.app.base_pipe
+
+                # Apply LoRA settings if provided
+                if lora_settings:
+                    adapter_names = [ls.adapter_name for ls in lora_settings]
+                    adapter_weights = [ls.weight for ls in lora_settings]
+                    var_pipe.set_adapters(adapter_names, adapter_weights)
+
+                # Use the redux pipe to produce extra kwargs from the image
+                extra_kwargs = request.app.redux_pipe(init_image)
+                # Use the prompt from the request as-is (even if None)
+                images = var_pipe(
+                    prompt=prompt,
+                    num_images_per_prompt=images_to_generate,
+                    guidance_scale=local_guidance,
+                    num_inference_steps=local_steps,
+                    **extra_kwargs
+                ).images
+
             else:
                 var_pipe = AutoPipelineForImage2Image.from_pipe(request.app.base_pipe)
-                # Synchronously get the image description
-                image_description = get_image_description(init_image, request) if prompt is None else prompt
-            var_prompt = prompt or image_description
-            images = var_pipe(
-                prompt=var_prompt,
-                image=init_image,
-                num_images_per_prompt=images_to_generate,
-                guidance_scale=guidance_scale,
-                num_inference_steps=num_inference_steps,
-                width=width,
-                height=height
-            ).images
 
+                if prompt is None:
+                    local_prompt = get_image_description(init_image, request)
+                else:
+                    local_prompt = prompt
+
+                if lora_settings:
+                    adapter_names = [ls.adapter_name for ls in lora_settings]
+                    adapter_weights = [ls.weight for ls in lora_settings]
+                    var_pipe.set_adapters(adapter_names, adapter_weights)
+
+                images = var_pipe(
+                    prompt=local_prompt,
+                    image=init_image,
+                    num_images_per_prompt=images_to_generate,
+                    guidance_scale=local_guidance,
+                    num_inference_steps=local_steps,
+                    width=width,
+                    height=height
+                ).images
+
+
+            var_pipe.disable_lora()
             result_container['result'] = encode_response(images, response_format, request)
-
         except Exception as e:
+            logging.error(f"Error during image variation generation: {e}")
             result_container['error'] = e
         finally:
             event.set()
 
-    # Enqueue the task and ensure the worker is running
+    # Enqueue the task and ensure the worker thread is running
     task_queue.put(task)
     ensure_worker_running()
     await event.wait()
@@ -557,7 +591,6 @@ async def generate_variations(
         raise HTTPException(status_code=500, detail=str(result_container['error']))
 
     return result_container['result']
-
 
 
 def encode_response(images, response_format, request: Request) -> Response:
