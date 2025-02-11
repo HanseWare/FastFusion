@@ -328,10 +328,17 @@ async def generate_images(request: Request, body: CreateImageRequest):
             images_to_generate = min(body.n or 1, request.app.pipe_config.pipeline.max_n)
             prompt = body.prompt or 'A beautiful landscape'
             width, height = map(int, (body.size or '1024x1024').split('x'))
-            quality = body.quality or 'standard'
-            preset = request.app.pipe_config.generation_presets.get(quality)
-            guidance_scale = preset.guidance_scale
-            num_inference_steps = preset.num_inference_steps
+            if not body.guidance_scale is None and not body.num_inference_steps is None:
+                guidance_scale = body.guidance_scale
+                num_inference_steps = body.num_inference_steps
+            elif not body.quality is None:
+                quality = body.quality or 'standard'
+                preset = request.app.pipe_config.generation_presets.get(quality)
+                guidance_scale = preset.guidance_scale
+                num_inference_steps = preset.num_inference_steps
+            else:
+                guidance_scale = request.app.pipe_config.pipeline.global_guidance_scale
+                num_inference_steps = request.app.pipe_config.pipeline.global_num_inference_steps
 
             images = gen_pipe(
                 prompt=prompt,

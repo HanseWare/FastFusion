@@ -11,7 +11,9 @@ class CreateImageRequest(BaseModel):
     prompt: str
     model: Optional[str] = "flux.1-dev"
     n: Optional[int] = 1
-    quality: Optional[str] = "standard"
+    quality: Optional[str] = None
+    guidance_scale: Optional[float] = None
+    num_inference_steps: Optional[int] = None
     response_format: Optional[str] = "url"
     size: Optional[str] = "1024x1024"
     style: Optional[str] = "vivid"
@@ -39,7 +41,7 @@ class CreateImageVariationRequest(BaseModel):
     size: Optional[str] = "1024x1024"
     response_format: Optional[str] = "url"
     user: Optional[str] = None  # Ignored
-    prompt: str = None  # Requirement over openAI
+    prompt: Optional[str] = None  # Requirement over openAI
     num_inference_steps: Optional[int] = 50  # Addon over openAI
     strength: Optional[float] = 0.75  # Addon over openAI
     guidance_scale: Optional[float] = 0.0  # Addon over openAI
