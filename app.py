@@ -52,13 +52,13 @@ logger = logging.getLogger(__name__)
 
 class FastFusionApp(FastAPI):
     pipe_config: FastFusionConfig | None
+    generations_pipe: ConfigMixin | None
+    edits_pipe: ConfigMixin | None
+    variations_pipe: ConfigMixin | None
+    redux_pipe: ConfigMixin | None
     base_pipe: ConfigMixin | None
-    generations_pipe_class: ConfigMixin | None
-    edits_pipe_class: ConfigMixin | None
-    variations_pipe_class: ConfigMixin | None
     data_path: str
     base_url: str
-    redux_pipe: ConfigMixin | None
     depth_processor: ConfigMixin | None
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -151,92 +151,90 @@ def setup():
 
         # Set up the model pipeline
         device = config.pipeline.torch_device
-        logger.info(f"Setting up model with device '{device}'...")
+        logger.info(f"Setting up model with device or device map: '{device}'...")
 
-        if (not config.pipeline.variations_config.enable_flux_redux) or (not config.pipeline.variations_config.vision_model_host) or (not config.pipeline.variations_config.vision_model):
-            config.pipeline.variations_config.enabled = False
-        elif config.pipeline.variations_config.enabled:
+        # if (not config.pipeline.variations_config.enable_flux_redux) or (not config.pipeline.variations_config.vision_model_host) or (not config.pipeline.variations_config.vision_model):
+        #     config.pipeline.variations_config.enabled = False
+        # el
+        if config.pipeline.variations_config.enabled:
             if config.pipeline.variations_config.vision_model_api_key == "":
                 config.pipeline.variations_config.vision_model_api_key = os.getenv(config.pipeline.variations_config.vision_model_api_key_variable, "ignored")
 
+        # Initialisieren Sie Container für die Pipelines
+        initialized_pipelines = {
+            "generation": None,
+            "edit": None,
+            "variation": None,
+            "redux": None
+        }
 
-        init_dtype = get_torch_dtype(config.pipeline.torch_dtype_init)
-        logger.info(f"Loading model pipeline with init dtype {init_dtype}...")
-        repo_redux = "black-forest-labs/FLUX.1-Redux-dev"
-        redux_pipe = None
-        if config.pipeline.variations_config.enable_flux_redux:
-            pipe = FluxPipeline.from_pretrained(config.pipeline.hf_model_id, torch_dtype=init_dtype)
-            redux_pipe = FluxPriorReduxPipeline.from_pretrained(repo_redux, torch_dtype=get_torch_dtype(config.pipeline.torch_dtype_run)).to(device)
-        else:
-            if config.pipeline.generations_config.enabled:
-                logger.info("Start loading base pipeline as image generation")
-                pipeline_class = getattr(diffusers, config.pipeline.generations_config.pipeline)
-                pipe = pipeline_class.from_pretrained(config.pipeline.hf_model_id,
-                                                                 torch_dtype=init_dtype)
-                logger.info("Finished loading base pipeline as image generation with class: %s", pipeline_class)
-            elif config.pipeline.edits_config.enabled:
-                logger.info("Start loading base pipeline as image edit")
-                pipeline_class = getattr(diffusers, config.pipeline.edits_config.pipeline)
-                pipe = pipeline_class.from_pretrained(config.pipeline.hf_model_id,
-                                                                 torch_dtype=init_dtype)
-                logger.info("Finished loading base pipeline as image edit with class: %s", pipeline_class)
-            elif config.pipeline.variations_config.enabled:
-                logger.info("Start loading base pipeline as image variation")
-                pipeline_class = getattr(diffusers, config.pipeline.variations_config.pipeline)
-                pipe = pipeline_class.from_pretrained(config.pipeline.hf_model_id,
-                                                                  torch_dtype=init_dtype)
-                logger.info("Finished loading base pipeline as image variation")
+        init_dtype = get_torch_dtype(
+            config.pipeline.torch_dtype_init if config.pipeline.torch_device != "balanced" else config.pipeline.torch_dtype_run)
+        run_dtype = get_torch_dtype(config.pipeline.torch_dtype_run)
+        device_map = config.pipeline.torch_device
+
+        # Laden Sie die Basis-Pipeline, die für alle anderen verwendet wird
+        base_pipe = AutoPipelineForText2Image.from_pretrained(config.pipeline.hf_model_id, torch_dtype=init_dtype,
+                                                 device_map=device_map)
+
+        # Laden Sie jede benötigte Pipeline explizit
+        if config.pipeline.generations_config.enabled:
+            logger.info("Loading image generation pipeline...")
+            if not config.pipeline.generations_config.pipeline is None:
+                initialized_pipelines["generation"] = (getattr(diffusers, config.pipeline.generations_config.pipeline)).from_pipe(base_pipe, torch_dtype=run_dtype)
             else:
-                raise ValueError(
-                    "No pipeline enabled. Please enable at least one of the following: images generation, image edits, image variations")
+                initialized_pipelines["generation"] = AutoPipelineForText2Image.from_pipe(base_pipe, torch_dtype=run_dtype)
+            logger.info("Finished loading image generation pipeline.")
 
-        # Load LoRA weights if available
+        if config.pipeline.edits_config.enabled:
+            logger.info("Loading image edit (inpainting) pipeline...")
+            if not config.pipeline.edits_config.pipeline is None:
+                initialized_pipelines["edit"] = (getattr(diffusers, config.pipeline.edits_config.pipeline)).from_pipe(base_pipe, torch_dtype=run_dtype)
+            else:
+                initialized_pipelines["edit"] = AutoPipelineForInpainting.from_pipe(base_pipe, torch_dtype=run_dtype)
+            logger.info("Finished loading image edit pipeline.")
+
+        if config.pipeline.variations_config.enabled:
+            logger.info("Loading image variation (image-to-image) pipeline...")
+            if config.pipeline.variations_config.enable_flux_redux:
+                # FLUX erfordert eine spezielle Handhabung
+                initialized_pipelines["variation"] = base_pipe  # Die Basis-Flux-Pipeline wird direkt verwendet
+                repo_redux = "black-forest-labs/FLUX.1-Redux-dev"
+                initialized_pipelines["redux"] = FluxPriorReduxPipeline.from_pretrained(repo_redux, torch_dtype=run_dtype,
+                                                                                        device_map=device_map)
+            elif not config.pipeline.variations_config.pipeline is None:
+                initialized_pipelines["variation"] = (getattr(diffusers, config.pipeline.variations_config.pipeline)).from_pipe(base_pipe, torch_dtype=run_dtype)
+            else:
+                initialized_pipelines["variation"] = AutoPipelineForImage2Image.from_pipe(base_pipe, torch_dtype=run_dtype)
+            logger.info("Finished loading image variation pipeline.")
+
+        # Löschen Sie die Basis-Pipeline, wenn sie nicht mehr benötigt wird, um Speicher freizugeben
+        del base_pipe
+        torch.cuda.empty_cache()
+
+        # Laden Sie LoRA-Gewichte für jede geladene Pipeline
         if config.pipeline.loras:
-            # download weights for remote models
-            for i, lora_config in enumerate(config.pipeline.loras):  # Use enumerate to get the index
-                if lora_config.type == "url":
-                    # Download the weights
-                    response = requests.get(lora_config.address)
-                    response.raise_for_status()  # Raise an exception for HTTP errors
+            # Wenden Sie die Gewichte auf jede aktive Pipeline an
+            for pipe in initialized_pipelines.values():
+                if pipe is not None:
+                    for lora_config in config.pipeline.loras:
+                        # Stellen Sie sicher, dass die Gewichte bereits heruntergeladen wurden
+                        weights_path = lora_config.address
+                        if lora_config.type == "url":
+                            weights_path = str(Path(
+                                "weights") / f"{lora_config.weight_name or lora_config.adapter_name}.safetensors")
 
-                    if not lora_config.weight_name:
-                        lora_config.weight_name = lora_config.adapter_name
-                    # Save the weights locally
-                    weights_path = Path("weights") / f"{lora_config.weight_name}.safetensors"
-                    weights_path.parent.mkdir(parents=True, exist_ok=True)
-                    with open(weights_path, 'wb') as f:
-                        f.write(response.content)
-                    logger.info(f"Downloaded LoRA weights to {weights_path}")
+                        pipe.load_lora_weights(weights_path, adapter_name=lora_config.adapter_name)
+                    pipe.disable_lora()
+                    logger.info(f"Loaded LoRA weights for pipeline: {pipe.__class__.__name__}")
 
-                    # Update the address in the configuration
-                    config.pipeline.loras[i].address = str(weights_path)
-
-            for lora_config in config.pipeline.loras:
-                pipe.load_lora_weights(lora_config.address, adapter_name=lora_config.adapter_name)
-                logger.info(f"Loaded LoRA weights from {lora_config.address}")
-
-            pipe.disable_lora()
-
-
-        # Apply settings before moving to GPU if necessary
-        if config.pipeline.enable_cpu_offload:
-            pipe.enable_sequential_cpu_offload()
-            logger.info("Enabled CPU offload...")
-
-        # Move the pipeline to GPU and convert to operation dtype
-        logger.info("Moving pipeline to runtime dtype")
-        logger.info(f"Pipeline runtime dtype: {config.pipeline.torch_dtype_run}")
-        pipe.to(get_torch_dtype(config.pipeline.torch_dtype_run))
-        logger.info(f"Move to {device}")
-        pipe.to(device)
-        logger.info(f"Finished moving pipeline to {device}")
-        # Apply settings that have to be applied after moving to GPU
-        if config.pipeline.enable_vae_slicing:
-            pipe.vae.enable_slicing()
-            logger.info("Enabled VAE slicing...")
-        if config.pipeline.enable_vae_tiling:
-            pipe.vae.enable_tiling()
-            logger.info("Enabled VAE tiling...")
+        # Wenden Sie weitere Einstellungen an
+        for pipe in initialized_pipelines.values():
+            if pipe is not None:
+                if config.pipeline.enable_vae_slicing:
+                    pipe.vae.enable_slicing()
+                if config.pipeline.enable_vae_tiling:
+                    pipe.vae.enable_tiling()
 
         logger.info("Model setup complete with:")
         logger.info(f"Model: {config.pipeline.hf_model_id}")
@@ -247,7 +245,7 @@ def setup():
         logger.info(f"Images Generation Enabled: {config.pipeline.generations_config.enabled}")
         logger.info(f"Image Edits Enabled: {config.pipeline.edits_config.enabled}")
         logger.info(f"Image Variations Enabled: {config.pipeline.variations_config.enabled}")
-        return pipe, config, data_path, redux_pipe
+        return initialized_pipelines, config, data_path
     except Exception as e:
         logging.error("Error during setup: %s", e)
         import traceback
@@ -279,23 +277,34 @@ def setup_logging():
 async def lifespan(app: FastAPI):
     # Load the ML model
     setup_logging()
-    pipe, config, data_path, redux_pipe = setup()
-    app.base_pipe = pipe
+    pipelines, config, data_path = setup()
+
+    # Speichern Sie jede Pipeline in der App
+    app.generations_pipe = pipelines.get("generation")
+    app.edits_pipe = pipelines.get("edit")
+    app.variations_pipe = pipelines.get("variation")
+    app.redux_pipe = pipelines.get("redux")
+
     app.pipe_config = config
-    app.generations_pipe_class = getattr(diffusers, config.pipeline.generations_config.pipeline)
-    app.edits_pipe_class = getattr(diffusers, config.pipeline.edits_config.pipeline)
-    app.variations_pipe_class = getattr(diffusers, config.pipeline.variations_config.pipeline)
     app.data_path = data_path
-    app.redux_pipe = redux_pipe
+
+    app.base_pipe = app.generations_pipe or app.edits_pipe or app.variations_pipe
+
     yield
     # Clean up the ML models and release the resources
-    app.base_pipe = None
+    app.generations_pipe = None
+    app.edits_pipe = None
+    app.variations_pipe = None
+    app.redux_pipe = None
     app.pipe_config = None
+    app.base_pipe = None
+    torch.cuda.empty_cache()
 
 fastfusion_app = FastFusionApp(lifespan=lifespan)
 
 @fastfusion_app.middleware("http")
 async def ensure_model_ready(request: Request, call_next):
+
     if request.app.base_pipe is None:
         raise HTTPException(status_code=503, detail="Model not ready")
     response = await call_next(request)
@@ -313,7 +322,9 @@ async def generate_images(request: Request, body: CreateImageRequest):
                 raise HTTPException(status_code=404, detail="Image generation not enabled")
 
             # Initialize the generation pipeline from the base pipeline
-            gen_pipe = request.app.generations_pipe_class.from_pipe(request.app.base_pipe)
+            gen_pipe = request.app.generations_pipe
+            if gen_pipe is None:
+                raise HTTPException(status_code=503, detail="Image generation pipeline not loaded")
 
             # Apply LoRA settings if provided
             if body.lora_settings:
@@ -395,7 +406,9 @@ async def edit_images(
                 raise HTTPException(status_code=404, detail="Image edits")
 
             # Initialize the edit pipeline from the base pipeline
-            edit_pipe = AutoPipelineForInpainting.from_pipe(request.app.base_pipe)
+            edit_pipe = request.app.edits_pipe
+            if edit_pipe is None:
+                raise HTTPException(status_code=503, detail="Image edit pipeline not loaded")
 
             # Apply LoRA settings if provided
             if lora_settings:
@@ -514,7 +527,7 @@ async def generate_variations(
         model: str = Form(...),
         size: Optional[str] = Form("1024x1024"),
         user: Optional[str] = Form(None),  # Ignored
-        prompt: Optional[str] = Form(None),
+        prompt: Optional[str] = Form("Create a Variation of the image!"),
         strength: Optional[float] = Form(None),  # Add-on over OpenAI
         guidance_scale: Optional[float] = Form(None),  # Add-on over OpenAI
         num_inference_steps: Optional[int] = Form(None),  # Add-on over OpenAI
@@ -558,7 +571,9 @@ async def generate_variations(
                 ).images
 
             else:
-                var_pipe = AutoPipelineForImage2Image.from_pipe(request.app.base_pipe)
+                var_pipe = request.app.variations_pipe
+                if var_pipe is None:
+                    raise HTTPException(status_code=503, detail="Image variation pipeline not loaded")
 
                 if prompt is None:
                     local_prompt = get_image_description(init_image, request)

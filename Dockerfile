@@ -1,4 +1,4 @@
-FROM hanseware/fastfusion-base:1.1.0
+FROM hanseware/fastfusion-base:1.2.0
 # Now copy python files and config file, not needed while installation but needed while running
 # so we have a small layer and build time is faster when onyl changing code
 COPY *.py /app/

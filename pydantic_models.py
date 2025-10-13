@@ -95,3 +95,6 @@ class FastFusionConfig(BaseModel):
     name: str
     pipeline: PipelineConfig
     generation_presets: dict[str, GenerationPreset]
+    generations_pipe_class: Optional[str] = None
+    edits_pipe_class: Optional[str] = None
+    variations_pipe_class: Optional[str] = None
