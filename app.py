@@ -54,6 +54,7 @@ class FastFusionApp(FastAPI):
     pipe_config: FastFusionConfig | None
     generations_pipe: ConfigMixin | None
     edits_pipe: ConfigMixin | None
+    inpaint_edits_pipe: ConfigMixin | None
     variations_pipe: ConfigMixin | None
     redux_pipe: ConfigMixin | None
     base_pipe: ConfigMixin | None
@@ -164,6 +165,7 @@ def setup():
         initialized_pipelines = {
             "generation": None,
             "edit": None,
+            "edit_inpaint": None,
             "variation": None,
             "redux": None
         }
@@ -176,6 +178,7 @@ def setup():
         # Laden Sie die Basis-Pipeline, die für alle anderen verwendet wird
         base_pipe = AutoPipelineForText2Image.from_pretrained(config.pipeline.hf_model_id, torch_dtype=init_dtype,
                                                  device_map=device_map)
+        logger.info(f"Setting up model with base pipeline: '{base_pipe.__class__.__name__}'...")
 
         # Laden Sie jede benötigte Pipeline explizit
         if config.pipeline.generations_config.enabled:
@@ -193,6 +196,10 @@ def setup():
             else:
                 initialized_pipelines["edit"] = AutoPipelineForInpainting.from_pipe(base_pipe, torch_dtype=run_dtype)
             logger.info("Finished loading image edit pipeline.")
+            if not config.pipeline.edits_config.inpaint_pipeline is None:
+                initialized_pipelines["edit_inpaint"] = (getattr(diffusers, config.pipeline.edits_config.pipeline)).from_pipe(base_pipe, torch_dtype=run_dtype)
+                logger.info("Finished loading image inpaint edit pipeline.")
+
 
         if config.pipeline.variations_config.enabled:
             logger.info("Loading image variation (image-to-image) pipeline...")
@@ -282,6 +289,7 @@ async def lifespan(app: FastAPI):
     # Speichern Sie jede Pipeline in der App
     app.generations_pipe = pipelines.get("generation")
     app.edits_pipe = pipelines.get("edit")
+    app.inpaint_edits_pipe = pipelines.get("edit_inpaint")
     app.variations_pipe = pipelines.get("variation")
     app.redux_pipe = pipelines.get("redux")
 
@@ -406,7 +414,10 @@ async def edit_images(
                 raise HTTPException(status_code=404, detail="Image edits")
 
             # Initialize the edit pipeline from the base pipeline
-            edit_pipe = request.app.edits_pipe
+            if mask is not None and request.app.inpaint_edits_pipe is not None:
+                edit_pipe = request.app.inpaint_edits_pipe
+            else:
+                edit_pipe = request.app.edits_pipe
             if edit_pipe is None:
                 raise HTTPException(status_code=503, detail="Image edit pipeline not loaded")
 
@@ -430,17 +441,30 @@ async def edit_images(
             mask_image = Image.open(BytesIO(mask_data)).convert("RGB") if mask_data else None
             width, height = map(int, (size or '1024x1024').split('x'))
 
-            images = edit_pipe(
-                prompt=prompt,
-                image=init_image,
-                mask_image=mask_image,
-                num_images_per_prompt=images_to_generate,
-                guidance_scale=guidance_scale,
-                strength=strength,
-                num_inference_steps=num_inference_steps,
-                width=width,
-                height=height
-            ).images
+            logger.debug("Editing images with parameters: ")
+            logger.debug(f"Prompt: {prompt}, Strength: {strength}, Guidance Scale: {guidance_scale}, Steps: {num_inference_steps}, Images to Generate: {images_to_generate}, Size: {width}x{height}")
+            if mask_data is None:
+                images = edit_pipe(
+                    prompt=prompt,
+                    image=init_image,
+                    num_images_per_prompt=images_to_generate,
+                    guidance_scale=guidance_scale,
+                    num_inference_steps=num_inference_steps,
+                    width=width,
+                    height=height
+                ).images
+            else:
+                images = edit_pipe(
+                    prompt=prompt,
+                    image=init_image,
+                    mask_image=mask_image,
+                    num_images_per_prompt=images_to_generate,
+                    guidance_scale=guidance_scale,
+                    strength=strength,
+                    num_inference_steps=num_inference_steps,
+                    width=width,
+                    height=height
+                ).images
 
             # Disable LoRA after editing to reset the model state
             edit_pipe.disable_lora()
@@ -458,6 +482,7 @@ async def edit_images(
     await event.wait()
 
     if 'error' in result_container:
+        logger.info(f"Image edits failed with error: {result_container['error']}")
         raise HTTPException(status_code=500, detail=str(result_container['error']))
 
     return result_container['result']
@@ -527,7 +552,6 @@ async def generate_variations(
         model: str = Form(...),
         size: Optional[str] = Form("1024x1024"),
         user: Optional[str] = Form(None),  # Ignored
-        prompt: Optional[str] = Form("Create a Variation of the image!"),
         strength: Optional[float] = Form(None),  # Add-on over OpenAI
         guidance_scale: Optional[float] = Form(None),  # Add-on over OpenAI
         num_inference_steps: Optional[int] = Form(None),  # Add-on over OpenAI
@@ -550,7 +574,7 @@ async def generate_variations(
             init_image = Image.open(BytesIO(image_data)).convert("RGB")
             width, height = map(int, (size or '1024x1024').split('x'))
 
-            if request.app.redux_pipe:
+            if request.app.redux_pipe is not None and request.app.pipe_config.pipeline.variations_config.enable_flux_redux:
                 var_pipe = request.app.base_pipe
 
                 # Apply LoRA settings if provided
@@ -563,7 +587,7 @@ async def generate_variations(
                 extra_kwargs = request.app.redux_pipe(init_image)
                 # Use the prompt from the request as-is (even if None)
                 images = var_pipe(
-                    prompt=prompt,
+                    prompt=None,
                     num_images_per_prompt=images_to_generate,
                     guidance_scale=local_guidance,
                     num_inference_steps=local_steps,
@@ -575,16 +599,15 @@ async def generate_variations(
                 if var_pipe is None:
                     raise HTTPException(status_code=503, detail="Image variation pipeline not loaded")
 
-                if prompt is None:
-                    local_prompt = get_image_description(init_image, request)
-                else:
-                    local_prompt = prompt
+                local_prompt = get_image_description(init_image, request)
 
                 if lora_settings:
                     adapter_names = [ls.adapter_name for ls in lora_settings]
                     adapter_weights = [ls.weight for ls in lora_settings]
                     var_pipe.set_adapters(adapter_names, adapter_weights)
 
+                logger.info("Generating variations with parameters: ")
+                logger.info(f"Prompt: {local_prompt}, Strength: {local_strength}, Guidance Scale: {local_guidance}, Steps: {local_steps}, Images to Generate: {images_to_generate}, Size: {width}x{height}")
                 images = var_pipe(
                     prompt=local_prompt,
                     image=init_image,

@@ -17,7 +17,8 @@
     },
     "edits_config": {
       "enabled": true,
-      "pipeline": "FluxFillPipeline"
+      "pipeline": "FluxFillPipeline",
+      "inpaint_pipeline": null
     },
     "variations_config": {
       "enable_flux_redux": false,

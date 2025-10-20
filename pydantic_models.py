@@ -53,6 +53,7 @@ class GenerationsConfig(BaseModel):
 class EditsConfig(BaseModel):
     enabled: bool = False
     pipeline: Optional[str] = "AutoPipelineForInpainting"
+    inpaint_pipeline: Optional[str] = None
 
 class VariationsConfig(BaseModel):
     enabled: bool = False
