@@ -1,31 +1,29 @@
+import asyncio
+import base64
+import json
+import os
+import queue
+import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
-import threading
-from pathlib import Path
-from typing import Dict, List
-
-import requests
-import torch
-import diffusers
-from diffusers import *
-import base64
 from io import BytesIO
-import logging
-import os
-import json
-
-import queue
+from pathlib import Path
 from threading import Thread
-import asyncio
+from typing import List
 
-from fastapi import FastAPI, HTTPException, Request, Response, Form, UploadFile, File
-from PIL import Image
+import diffusers
 import openai
+import torch
+from PIL import Image
+from diffusers import *
+import logging
+from fastapi import FastAPI, HTTPException, Request, Response, Form, UploadFile, File
 from pythonjsonlogger.json import JsonFormatter
 
 from pydantic_models import *
+
 __name__ = "hanseware.fastfusion"
 
 RESERVED_ATTRS: List[str] = [
@@ -254,7 +252,7 @@ def setup():
         logger.info(f"Image Variations Enabled: {config.pipeline.variations_config.enabled}")
         return initialized_pipelines, config, data_path
     except Exception as e:
-        logging.error("Error during setup: %s", e)
+        logger.error("Error during setup: %s", e)
         import traceback
         traceback.print_exc()
         raise e
@@ -267,7 +265,7 @@ def setup_logging():
         from diffusers.utils import logging as diffusers_logging
         transformers_logging.set_verbosity_debug()
         diffusers_logging.set_verbosity_debug()
-    logger.info("Setting log level from env to", loglevel)
+    logger.info("Setting log level from env to %s", loglevel)
     logging.basicConfig(level=logging.getLevelName(loglevel))
     logHandler = logging.StreamHandler()
     formatter = JsonFormatter(timestamp=True, reserved_attrs=RESERVED_ATTRS, datefmt='%Y-%m-%d %H:%M:%S')
@@ -336,6 +334,7 @@ async def generate_images(request: Request, body: CreateImageRequest):
 
             # Apply LoRA settings if provided
             if body.lora_settings:
+                logger.debug("Setting lora settings to %s", body.lora_settings)
                 adapter_names = []
                 adapter_weights = []
                 for lora_setting in body.lora_settings:
@@ -359,6 +358,8 @@ async def generate_images(request: Request, body: CreateImageRequest):
                 guidance_scale = request.app.pipe_config.pipeline.global_guidance_scale
                 num_inference_steps = request.app.pipe_config.pipeline.global_num_inference_steps
 
+            logger.debug("Generating images with parameters: ")
+            logger.debug(f"Prompt of type str: {isinstance(prompt, str)}, Prompt {prompt}, Guidance Scale: {guidance_scale}, Steps: {num_inference_steps}, Images to Generate: {images_to_generate}, Size: {width}x{height}")
             images = gen_pipe(
                 prompt=prompt,
                 width=width,
@@ -367,10 +368,12 @@ async def generate_images(request: Request, body: CreateImageRequest):
                 num_inference_steps=num_inference_steps,
                 num_images_per_prompt=images_to_generate
             ).images
+            logger.debug(f"Generated {len(images)} images")
 
             gen_pipe.disable_lora()  # Disable LoRA after generation to reset the state
-
+            logger.debug("Disabled LoRA after generation")
             result_container['result'] = encode_response(images, body.response_format or 'url', request)
+            logger.debug("Encoding response complete")
 
         except Exception as e:
             result_container['error'] = e
@@ -383,6 +386,7 @@ async def generate_images(request: Request, body: CreateImageRequest):
     await event.wait()
 
     if 'error' in result_container:
+        logger.info(f"Image generation failed with error: {result_container['error']}")
         raise HTTPException(status_code=500, detail=str(result_container['error']))
 
     return result_container['result']
