@@ -15,6 +15,7 @@ from typing import List
 
 import diffusers
 import openai
+import requests
 import torch
 from PIL import Image
 from diffusers import *
@@ -178,6 +179,30 @@ def setup():
                                                  device_map=device_map)
         logger.info(f"Setting up model with base pipeline: '{base_pipe.__class__.__name__}'...")
 
+        # Laden Sie LoRA-Gewichte für jede geladene Pipeline
+        if config.pipeline.loras:
+            for lora_config in config.pipeline.loras:
+                # Stellen Sie sicher, dass die Gewichte bereits heruntergeladen wurden
+                weights_path = lora_config.address
+                if lora_config.type == "url":
+                    response = requests.get(lora_config.address)
+                    response.raise_for_status()
+                    weights_path = Path("weights") / f"{lora_config.adapter_name}.safetensors"
+                    weights_path.parent.mkdir(parents=True, exist_ok=True)
+                    with open(weights_path, 'wb') as f:
+                        f.write(response.content)
+                    weights_path = str(weights_path)
+                    logger.info(f"Downloaded LoRA weights to {weights_path}")
+                elif lora_config.type == "hub":
+                    weights_path = lora_config.weight_name # In this case, we assume the weight name is sufficient for the hub loading mechanism of the pipeline has to be in repo/adapter_name format
+                    logger.info(f"Downloading LoRA weights from hub with id {lora_config.weight_name}...")
+                else: # skip loop
+                    continue
+                logger.info(f"Setting up lora model {lora_config.adapter_name} with weights: {weights_path}...")
+                base_pipe.load_lora_weights(weights_path, adapter_name=lora_config.adapter_name)
+            base_pipe.disable_lora()
+            logger.info(f"Loaded LoRA weights for base pipeline")
+
         # Laden Sie jede benötigte Pipeline explizit
         if config.pipeline.generations_config.enabled:
             logger.info("Loading image generation pipeline...")
@@ -217,25 +242,9 @@ def setup():
         del base_pipe
         torch.cuda.empty_cache()
 
-        # Laden Sie LoRA-Gewichte für jede geladene Pipeline
-        if config.pipeline.loras:
-            # Wenden Sie die Gewichte auf jede aktive Pipeline an
-            for pipe in initialized_pipelines.values():
-                if pipe is not None:
-                    for lora_config in config.pipeline.loras:
-                        # Stellen Sie sicher, dass die Gewichte bereits heruntergeladen wurden
-                        weights_path = lora_config.address
-                        if lora_config.type == "url":
-                            weights_path = str(Path(
-                                "weights") / f"{lora_config.weight_name or lora_config.adapter_name}.safetensors")
-
-                        pipe.load_lora_weights(weights_path, adapter_name=lora_config.adapter_name)
-                    pipe.disable_lora()
-                    logger.info(f"Loaded LoRA weights for pipeline: {pipe.__class__.__name__}")
-
         # Wenden Sie weitere Einstellungen an
-        for pipe in initialized_pipelines.values():
-            if pipe is not None:
+        for pipe_name, pipe in initialized_pipelines.items():
+            if pipe is not None and pipe_name != "redux":  # Redux-Pipeline hat möglicherweise andere Anforderungen, überspringen Sie daher die globalen Einstellungen
                 if config.pipeline.enable_vae_slicing:
                     pipe.vae.enable_slicing()
                 if config.pipeline.enable_vae_tiling:
@@ -323,6 +332,7 @@ async def generate_images(request: Request, body: CreateImageRequest):
     result_container = {}
 
     def task():
+        gen_pipe = None
         try:
             if not request.app.pipe_config.pipeline.generations_config.enabled:
                 raise HTTPException(status_code=404, detail="Image generation not enabled")
@@ -341,6 +351,8 @@ async def generate_images(request: Request, body: CreateImageRequest):
                     adapter_names.append(lora_setting.name)
                     adapter_weights.append(lora_setting.weight)
                 gen_pipe.set_adapters(adapter_names, adapter_weights)
+                gen_pipe.enable_lora()
+                logger.debug("Enabled LoRA with adapters: %s and weights: %s", adapter_names, adapter_weights)
 
             # Generate images based on the provided prompt and settings
             images_to_generate = min(body.n or 1, request.app.pipe_config.pipeline.max_n)
@@ -370,14 +382,15 @@ async def generate_images(request: Request, body: CreateImageRequest):
             ).images
             logger.debug(f"Generated {len(images)} images")
 
-            gen_pipe.disable_lora()  # Disable LoRA after generation to reset the state
-            logger.debug("Disabled LoRA after generation")
             result_container['result'] = encode_response(images, body.response_format or 'url', request)
             logger.debug("Encoding response complete")
 
         except Exception as e:
             result_container['error'] = e
         finally:
+            if gen_pipe is not None:
+                gen_pipe.disable_lora()  # Ensure adapters are disabled even if an error occurs
+                logger.debug("Disabled LoRA after generation")
             event.set()
 
     # Enqueue the task and ensure the worker is running
@@ -413,6 +426,7 @@ async def edit_images(
     result_container = {}
 
     def task():
+        edit_pipe = None
         try:
             if not request.app.pipe_config.pipeline.edits_config.enabled:
                 raise HTTPException(status_code=404, detail="Image edits")
@@ -433,6 +447,8 @@ async def edit_images(
                     adapter_names.append(lora_setting.name)
                     adapter_weights.append(lora_setting.weight)
                 edit_pipe.set_adapters(adapter_names, adapter_weights)
+                edit_pipe.enable_lora()
+                logger.debug("Enabled LoRA with adapters: %s and weights: %s", adapter_names, adapter_weights)
 
             images_to_generate = min(n, request.app.pipe_config.pipeline.max_n)
 
@@ -470,14 +486,15 @@ async def edit_images(
                     height=height
                 ).images
 
-            # Disable LoRA after editing to reset the model state
-            edit_pipe.disable_lora()
 
             result_container['result'] = encode_response(images, response_format, request)
 
         except Exception as e:
             result_container['error'] = e
         finally:
+            if edit_pipe is not None:
+                edit_pipe.disable_lora()  # Ensure adapters are disabled even if an error occurs
+                logger.debug("Disabled LoRA after editing")
             event.set()
 
     # Enqueue the task and ensure the worker is running
@@ -565,6 +582,7 @@ async def generate_variations(
     result_container = {}
 
     def task():
+        var_pipe = None
         try:
             if not request.app.pipe_config.pipeline.variations_config.enabled:
                 raise HTTPException(status_code=404, detail="Image variations not enabled")
@@ -586,6 +604,8 @@ async def generate_variations(
                     adapter_names = [ls.adapter_name for ls in lora_settings]
                     adapter_weights = [ls.weight for ls in lora_settings]
                     var_pipe.set_adapters(adapter_names, adapter_weights)
+                    var_pipe.enable_lora()
+                    logger.debug("Enabled LoRA with adapters: %s and weights: %s", adapter_names, adapter_weights)
 
                 # Use the redux pipe to produce extra kwargs from the image
                 extra_kwargs = request.app.redux_pipe(init_image)
@@ -609,6 +629,8 @@ async def generate_variations(
                     adapter_names = [ls.adapter_name for ls in lora_settings]
                     adapter_weights = [ls.weight for ls in lora_settings]
                     var_pipe.set_adapters(adapter_names, adapter_weights)
+                    var_pipe.enable_lora()
+                    logger.debug("Enabled LoRA with adapters: %s and weights: %s", adapter_names, adapter_weights)
 
                 logger.info("Generating variations with parameters: ")
                 logger.info(f"Prompt: {local_prompt}, Strength: {local_strength}, Guidance Scale: {local_guidance}, Steps: {local_steps}, Images to Generate: {images_to_generate}, Size: {width}x{height}")
@@ -622,13 +644,14 @@ async def generate_variations(
                     height=height
                 ).images
 
-
-            var_pipe.disable_lora()
             result_container['result'] = encode_response(images, response_format, request)
         except Exception as e:
             logging.error(f"Error during image variation generation: {e}")
             result_container['error'] = e
         finally:
+            if var_pipe is not None:
+                var_pipe.disable_lora()  # Ensure adapters are disabled even if an error occurs
+                logger.debug("Disabled LoRA after variation generation")
             event.set()
 
     # Enqueue the task and ensure the worker thread is running
