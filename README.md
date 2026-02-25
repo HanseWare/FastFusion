@@ -526,6 +526,6 @@ If you plan to make code changes, we generally recommend following a standard Gi
 Please ensure your pull request descriptions are clear and explain the purpose and scope of your changes.
 
 Thank you for considering contributing to FastFusion!
-
+ 
 ## License
 [MIT](https://choosealicense.com/licenses/mit/)
