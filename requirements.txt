@@ -1,22 +1,22 @@
-accelerate~=1.10.1
-git+https://github.com/huggingface/diffusers.git
-# diffusers~=0.36.0
+diffusers
+accelerate
+# git+https://github.com/huggingface/diffusers.git
 ftfy
-pillow~=11.3.0
-tokenizers~=0.22.1
-transformers~=4.56.2
+pillow
+tokenizers
+transformers
 peft
 protobuf
-huggingface-hub~=0.35.3
-fastapi~=0.118.0
+huggingface-hub
+fastapi
 pydantic
-torch~=2.7.1
+torch
 numpy
 sentence-transformers
 sentencepiece
-python-multipart~=0.0.20
-openai~=2.2.0
-uvicorn~=0.37.0
+python-multipart
+openai
+uvicorn
 python-json-logger~=4.0.0
 git+https://github.com/huggingface/image_gen_aux#egg=image_gen_aux
-controlnet-aux~=0.0.10
+controlnet-aux

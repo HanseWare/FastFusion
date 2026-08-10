@@ -324,6 +324,8 @@ Several environment variables are used to configure the application's runtime be
     *   Default: `"0.0.0.0"` (listens on all available network interfaces)
 *   `FASTFUSION_PORT`: The port the Uvicorn server binds to when running `app.py` directly.
     *   Default: `9999`
+*   `FASTFUSION_REQUEST_TIMEOUT`: Maximum time in seconds a non-streaming image request may take before the server responds with a 504 (the queued task is cancelled via the pipeline's interrupt flag where supported).
+    *   Default: `1800`
 
 ## API Documentation
 
@@ -422,6 +424,47 @@ Endpoints that generate images (`/generations`, `/edits`, `/variations`) return 
       "status": "ok"
     }
     ```
+
+### 6. `GET /v1/models`
+
+*   **Purpose:** OpenAI-compatible model listing (some clients probe this at startup). Returns the configured model name from `model_config.json`.
+
+### 7. Streaming (SSE)
+
+`POST /v1/images/generations` and `POST /v1/images/edits` support the OpenAI Images API streaming protocol. Pass `stream: true` (and optionally `partial_images: 0-3`) and the response becomes a `text/event-stream` of Server-Sent Events:
+
+*   `image_generation.partial_image` / `image_edit.partial_image`: emitted at evenly spaced diffusion steps with a `b64_json` preview decoded from the intermediate latents, plus `partial_image_index` (0-based).
+*   `image_generation.completed` / `image_edit.completed`: one event per finished image with the final `b64_json`.
+*   `error`: emitted if the task fails mid-stream.
+
+Notes:
+
+*   Partial previews are decoded with the pipeline's own VAE (best effort, model-agnostic). If the pipeline does not support step callbacks or preview decoding fails, you still receive the `completed` event(s) — previews are skipped silently.
+*   Streaming responses are always base64 (`b64_json`); `response_format` is ignored while streaming, matching OpenAI.
+*   Client disconnects propagate a cancellation flag into the pipeline (`_interrupt`) so abandoned requests stop consuming GPU time on pipelines that support interruption.
+
+Example with the official OpenAI Python client:
+
+```python
+stream = client.images.generate(prompt="a lighthouse at dawn", model="ignored",
+                                stream=True, partial_images=2)
+for event in stream:
+    if event.type == "image_generation.partial_image":
+        show_preview(event.b64_json, event.partial_image_index)
+    elif event.type == "image_generation.completed":
+        save_image(event.b64_json)
+```
+
+### 8. Additional OpenAI compatibility notes
+
+*   `quality` accepts any preset name from `generation_presets` plus OpenAI's values; `auto` or unknown values fall back to the global defaults instead of erroring.
+*   `size` accepts any `WIDTHxHEIGHT` (snapped to multiples of 16) or `auto` (1024x1024 for generations, the input image size for edits/variations).
+*   `output_format` (`png`, `webp`, `jpeg`) and `output_compression` (0-100, for webp/jpeg) are supported on generations and edits.
+*   `/v1/images/edits` accepts multiple input images via repeated `image[]` fields (as sent by OpenAI clients) in addition to a single `image` field.
+*   Edit masks follow OpenAI semantics: if the mask has an alpha channel, transparent areas mark the region to edit. Masks without alpha are treated as legacy white-means-edit grayscale masks.
+*   If the edit pipeline requires a mask (e.g. an inpainting pipeline) and none is provided, a full-white mask is used, meaning the whole image is repainted guided by the prompt.
+*   Unknown request fields (e.g. `moderation`, `input_fidelity`, `style`) are accepted and ignored.
+*   `lora_settings` on the multipart endpoints (`/edits`, `/variations`) is passed as a JSON string form field, e.g. `-F 'lora_settings=[{"name": "my-adapter", "weight": 0.8}]'`. Unknown adapter names return a 400 listing the available adapters.
 
 ## Models Supported
 

@@ -1,59 +1,47 @@
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 class LoRASetting(BaseModel):
-    name: str
+    # Accept both "name" and the legacy "adapter_name" key from clients
+    model_config = ConfigDict(populate_by_name=True)
+    name: str = Field(validation_alias=AliasChoices("name", "adapter_name"))
     weight: Optional[float] = 1.0
 
+
 class CreateImageRequest(BaseModel):
+    # Unknown/extra OpenAI parameters are ignored instead of rejected
+    model_config = ConfigDict(extra="ignore")
     prompt: str
-    model: Optional[str] = "flux.1-dev"
+    model: Optional[str] = None  # Ignored, single-model server
     n: Optional[int] = 1
     quality: Optional[str] = None
-    guidance_scale: Optional[float] = None
-    num_inference_steps: Optional[int] = None
-    response_format: Optional[str] = "url"
-    size: Optional[str] = "1024x1024"
-    style: Optional[str] = "vivid"
+    response_format: Optional[str] = None  # url | b64_json, default url
+    size: Optional[str] = None  # "WIDTHxHEIGHT" or "auto"
+    style: Optional[str] = None  # Ignored
     user: Optional[str] = None  # Ignored
-    lora_settings: Optional[list[LoRASetting]] = None
+    background: Optional[str] = None  # Accepted, echoed in stream events
+    moderation: Optional[str] = None  # Ignored
+    output_format: Optional[str] = None  # png | webp | jpeg
+    output_compression: Optional[int] = None  # 0-100 for webp/jpeg
+    stream: Optional[bool] = False
+    partial_images: Optional[int] = 0  # 0-3 partial images while streaming
+    guidance_scale: Optional[float] = None  # Addon over openAI
+    num_inference_steps: Optional[int] = None  # Addon over openAI
+    lora_settings: Optional[list[LoRASetting]] = None  # Addon over openAI
 
-
-class CreateImageEditRequest(BaseModel):
-    prompt: str
-    image: str  # Assuming binary as a string
-    mask: Optional[str] = None
-    model: Optional[str] = "flux.1-dev"
-    n: Optional[int] = 1
-    size: Optional[str] = "1024x1024"
-    response_format: Optional[str] = "url"
-    user: Optional[str] = None  # Ignored
-    guidance_scale: Optional[float] = 7.0  # Addon over openAI
-    num_inference_steps: Optional[int] = 50  # Addon over openAI
-
-
-class CreateImageVariationRequest(BaseModel):
-    image: str  # Assuming binary as a string
-    model: Optional[str] = "flux.1-dev"
-    n: Optional[int] = 1
-    size: Optional[str] = "1024x1024"
-    response_format: Optional[str] = "url"
-    user: Optional[str] = None  # Ignored
-    prompt: Optional[str] = None  # Requirement over openAI
-    num_inference_steps: Optional[int] = 50  # Addon over openAI
-    strength: Optional[float] = 0.75  # Addon over openAI
-    guidance_scale: Optional[float] = 0.0  # Addon over openAI
 
 class GenerationsConfig(BaseModel):
     enabled: bool = False
     pipeline: Optional[str] = "AutoPipelineForText2Image"
 
+
 class EditsConfig(BaseModel):
     enabled: bool = False
     pipeline: Optional[str] = "AutoPipelineForInpainting"
     inpaint_pipeline: Optional[str] = None
+
 
 class VariationsConfig(BaseModel):
     enabled: bool = False
@@ -64,11 +52,13 @@ class VariationsConfig(BaseModel):
     vision_model_api_key_variable: Optional[str] = ""
     vision_model_api_key: Optional[str] = ""
 
+
 class LoRAConfig(BaseModel):
-    type: str # one of hub, local, or url
-    address: str # address of the LoRA model, either a hub model name, a local path, or a URL
-    weight_name: Optional[str] = None # name of the weight file to load
-    adapter_name: str # name the adapter should have in the model
+    type: str  # one of hub, local, or url
+    address: str  # hub repo id, local path, or URL of the LoRA weights
+    weight_name: Optional[str] = None  # optional weight file name inside a hub repo
+    adapter_name: str  # name the adapter should have in the model
+
 
 class PipelineConfig(BaseModel):
     hf_model_id: str
